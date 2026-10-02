@@ -1,0 +1,6 @@
+# Output from running the converter on the samples
+samples/**/*.pptx
+samples/**/*_conversion_report.txt
+samples/**/_pptx_converted/
+__pycache__/
+*.pyc
