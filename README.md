@@ -78,7 +78,7 @@ by its position. Exports made before these files existed still convert, using es
 | Publisher content | In the `.pptx` |
 | --- | --- |
 | Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
-| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, line breaks, first-line indents and tabs. |
+| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, line breaks, first-line indents, tabs and blank lines. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup. |
 | Picture | A picture at the same position and size. With `-HiRes`, stage 1's 300 dpi PNG is used. |
 | Pictures inside groups | Exported one by one in stage 1. |
 | Master page pictures | Exported in stage 1. |
@@ -107,6 +107,9 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   with one factor for all fonts. Without the file, positions are estimated from the HTML.
 - **Shapes and WordArt:** only what Publisher's HTML export writes out comes through. A
   shape or WordArt the export doesn't write out is missing from the slide.
+- **Text boxes exported as pictures:** a text box inside a group, a rotated one, or WordArt
+  stays a picture. Without `_text.json`, a rebuilt text box that Publisher aligns to the
+  bottom or middle starts at the top instead.
 
 ## Samples
 `samples\` holds nine test publications, one folder each. Every folder holds the source
