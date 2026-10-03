@@ -62,7 +62,7 @@ from typing import Optional
 from urllib.parse import unquote
 
 try:
-    from bs4 import BeautifulSoup, NavigableString, Tag
+    from bs4 import BeautifulSoup, Comment, NavigableString, Tag
     # Base of Comment, Doctype, CData etc.: strings that are not page text.
     # Publisher 2010 puts its VML shape markup in <!--[if gte vml 1]> comments.
     from bs4.element import PreformattedString
@@ -123,7 +123,14 @@ def parse_decls(text: str) -> dict:
         name, _, value = chunk.partition(":")
         name = name.strip().lower()
         value = value.strip()
-        if name and value:
+        if name in ("padding", "margin") and value:
+            # 1-4 values: top, right, bottom, left as CSS repeats them
+            v = value.split()
+            v = (v * 4)[:4] if len(v) == 1 else (v + v)[:4] if len(v) == 2 else (
+                v + [v[1]] if len(v) == 3 else v[:4])
+            for side, val in zip(("top", "right", "bottom", "left"), v):
+                out[f"{name}-{side}"] = val
+        elif name and value:
             out[name] = value
     return out
 
@@ -562,6 +569,7 @@ class Converter:
         self.trailing = 0.0
         # stage 1's paragraphs, by pub_key; empty for older exports
         self.pub_text: dict = {}
+        self.pub_claimed: set = set()     # ids of records already placed
 
     # -- runs and paragraphs ------------------------------------------------
 
@@ -594,7 +602,8 @@ class Converter:
 
         def flush():
             nonlocal current
-            if current.runs and current.text().strip():
+            # Publisher writes an empty paragraph as <p>&nbsp;</p>
+            if current.runs and (current.text().strip() or "\xa0" in current.text()):
                 paras.append(current)
             current = Para()
 
@@ -608,7 +617,7 @@ class Converter:
                     text = raw.replace("\r\n", "\n")
                 else:
                     text = _HTML_WS_RE.sub(" ", raw)
-                if not text or (not text.strip() and not current.runs):
+                if not text or (not text.strip() and not current.runs and "\xa0" not in text):
                     return
                 run = self._make_run(text, style)
                 if run:
@@ -660,12 +669,19 @@ class Converter:
                 p.pub, p.pub_placed = rec, placed
             elif p.align in (None, PP_ALIGN.LEFT):
                 self._restore_tabs(p)
-        return [p for p in paras if p.text().strip()]
+        text_paras = [p for p in paras if p.text().strip()]
+        if not text_paras or all(p.pub_placed for p in text_paras):
+            # _pub_place folds the empty paragraphs into the space after
+            return text_paras
+        # otherwise an empty paragraph is a blank line, except at the end
+        while paras and not paras[-1].text().strip():
+            paras.pop()
+        return paras
 
     def pub_find(self, key: str, region=None):
-        """Stage 1's record for a paragraph: the one inside region (x0, y0, x1,
-        y1 in px) if there is one, so repeated text matches the right copy.
-        Returns (record, found_in_region)."""
+        """Stage 1's record for a paragraph: the first unclaimed one inside
+        region (x0, y0, x1, y1 in px) if there is one, so repeated text matches
+        the right copy, and claims it. Returns (record, found_in_region)."""
         recs = self.pub_text.get(key)
         if not recs:
             return None, False
@@ -675,9 +691,12 @@ class Converter:
             for rec in recs:
                 if rec.get("top") is None or rec.get("left") is None:
                     continue
+                if id(rec) in self.pub_claimed:
+                    continue
                 rx = rec["left"] * self.dpi / 72.0
                 ry = rec["top"] * self.dpi / 72.0
                 if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
+                    self.pub_claimed.add(id(rec))
                     return rec, True
         return recs[0], False
 
@@ -782,7 +801,8 @@ class Converter:
         if not rows:
             return [], 0.0
 
-        pad = to_px(table.get("cellpadding"), self.dpi) or 2.0
+        pad = to_px(table.get("cellpadding"), self.dpi)
+        pad = 2.0 if pad is None else pad
         grid = [r.find_all(["td", "th"]) for r in rows]
         ncols = max(sum(max(1, int(c.get("colspan", 1) or 1)) for c in cells) for cells in grid)
         ncols = max(ncols, 1)
@@ -860,22 +880,46 @@ class Converter:
                     paras = self.collect_paras(cell, sheet, cs, stop_nodes,
                                                region=(cx, cy, cx + cw, cy + row_h[ri]))
                     where = self._pub_place(paras)
+                    # the cell's own padding, else the table's cellpadding,
+                    # plus that of the text box's <div class=shape> inside it
+                    pl, pt_, pr, pb = (
+                        (pad if v is None else v) + inner for v, inner in zip(
+                            (to_px(cs.get("padding-" + side), self.dpi, cw)
+                             for side in ("left", "top", "right", "bottom")),
+                            self._wrapper_padding(cell, sheet, cs, cw)))
                     self.order += 1
                     if where:
                         top, _ = where
-                        boxes.append(Box(kind="text", x=cx + pad, y=top,
-                                         w=max(cw - 2 * pad, 8.0),
+                        boxes.append(Box(kind="text", x=cx + pl, y=top,
+                                         w=max(cw - pl - pr, 8.0),
                                          h=max(cy + row_h[ri] - top, 8.0),
                                          paras=paras, order=self.order, note="table cell",
                                          fixed=True))
                     else:
-                        boxes.append(Box(kind="text", x=cx + pad, y=cy + pad,
-                                         w=max(cw - 2 * pad, 8.0),
-                                         h=max(row_h[ri] - 2 * pad, 8.0),
+                        boxes.append(Box(kind="text", x=cx + pl, y=cy + pt_,
+                                         w=max(cw - pl - pr, 8.0),
+                                         h=max(row_h[ri] - pt_ - pb, 8.0),
                                          paras=paras, order=self.order, note="table cell",
                                          anchor=valign))
             cy += row_h[ri]
         return boxes, cy - y
+
+    def _wrapper_padding(self, cell: Tag, sheet: StyleSheet, style: dict, cw: float) -> list:
+        """Padding (left, top, right, bottom px) of the divs that wrap all of a
+        cell's content, one inside the other."""
+        total = [0.0, 0.0, 0.0, 0.0]
+        el = cell
+        while True:
+            kids = [c for c in el.children
+                    if isinstance(c, Tag) or (isinstance(c, NavigableString)
+                                              and not isinstance(c, PreformattedString)
+                                              and c.strip())]
+            if len(kids) != 1 or not isinstance(kids[0], Tag) or kids[0].name != "div":
+                return total
+            el = kids[0]
+            style = computed_style(el, sheet, style)
+            for i, side in enumerate(("left", "top", "right", "bottom")):
+                total[i] += to_px(style.get("padding-" + side), self.dpi, cw) or 0.0
 
     # -- segmentation: split a node's own content into document-order pieces --
 
@@ -1279,15 +1323,84 @@ class Converter:
 # Page detection
 # ----------------------------------------------------------------------------
 
-def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float):
-    """Publisher wraps each page in a sized, positioned div. Find them."""
+def _vml_pt(value, default=0.0) -> float:
+    """A VML length in pt: '34.84pt', '0' or '2.85pt'."""
+    m = re.match(r"\s*(-?[\d.]+)\s*(pt|in|px)?", str(value or ""))
+    if not m:
+        return default
+    v = float(m.group(1))
+    return {"in": v * 72.0, "px": v * 0.75}.get(m.group(2), v)
+
+
+def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
+    """Publisher exports some text boxes (filled ones, for instance) as a
+    picture of the text, keeping the real text only in the VML inside an
+    <!--[if gte vml 1]> comment. Swaps each such picture for a positioned div
+    holding that text, so it stays editable. Shapes inside a VML group, rotated
+    or WordArt shapes keep their picture. Returns how many were swapped."""
+    found = {}
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
+        vml = BeautifulSoup(str(c), "html.parser")
+        for shape in vml.find_all(["v:shape", "v:rect", "v:roundrect"]):
+            box = shape.find("v:textbox", recursive=False)
+            if (box is None or not box.get_text(strip=True) or shape.find_parent("v:group")
+                    or shape.find("v:textpath")):
+                continue
+            decl = parse_decls(shape.get("style", ""))
+            if decl.get("rotation") or "layout-flow" in str(box.get("style", "")):
+                continue
+            found[shape.get("id")] = (shape, decl, box)
+    count = 0
+    for img in soup.find_all("img"):
+        hit = found.get(img.get("v:shapes"))
+        if not hit:
+            continue
+        shape, decl, box = hit
+        inset = [_vml_pt(v, 2.88) for v in (box.get("inset") or "").split(",")]
+        inset += [2.88] * (4 - len(inset))          # left, top, right, bottom
+        inner = box.find("div")
+        pad = parse_decls(inner.get("style", "")) if inner else {}
+        styles = [
+            "position:absolute",
+            f"left:{_vml_pt(decl.get('left')):.2f}pt",
+            f"top:{_vml_pt(decl.get('top')):.2f}pt",
+            f"width:{_vml_pt(decl.get('width')):.2f}pt",
+            f"height:{_vml_pt(decl.get('height')):.2f}pt",
+            f"padding-left:{inset[0] + _vml_pt(pad.get('padding-left')):.2f}pt",
+            f"padding-top:{inset[1] + _vml_pt(pad.get('padding-top')):.2f}pt",
+            f"padding-right:{inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
+            f"padding-bottom:{inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
+        ]
+        fill = str(shape.get("fillcolor") or "").split()
+        if fill and str(shape.get("filled", "t")).lower() not in ("f", "false"):
+            styles.append(f"background-color:{fill[0]}")
+        div = soup.new_tag("div", style=";".join(styles))
+        for child in list((inner or box).children):
+            div.append(child.extract())
+        # the picture sits in a positioned span of its own
+        target = img.parent if (img.parent and img.parent.name == "span"
+                                and len(img.parent.find_all(True)) == 1) else img
+        target.replace_with(div)
+        count += 1
+    return count
+
+
+def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
+                         default_h: Optional[float] = None):
+    """Publisher wraps each page in a sized, positioned div. Find them.
+    Publisher sometimes writes a malformed height ('10.-1737in') on that
+    div; default_h (px) stands in for it."""
     body = soup.body or soup
     candidates = []
     for el in body.find_all(["div", "table", "section"]):
         st = computed_style(el, sheet, {})
         w = to_px(st.get("width"), dpi)
         h = to_px(st.get("height"), dpi)
-        if not w or not h or w < 200 or h < 200:
+        # Publisher's own wrapper: a positioned div straight under <body>
+        wrapper = el.name == "div" and el.parent is body and is_positioned(st)
+        if not h and default_h and wrapper and st.get("height"):
+            h = default_h
+        if not w or not h or ((w < 200 or h < 200) and not wrapper):
             continue
         # must not be nested inside another candidate
         candidates.append((el, w, h, st))
@@ -1600,6 +1713,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         with open(html_path, "rb") as fh:
             raw = fh.read()
         soup = BeautifulSoup(raw, "lxml")
+        restore_vml_text_boxes(soup)
         sheet = StyleSheet()
         for st in soup.find_all("style"):
             sheet.add_css(st.get_text())
@@ -1615,7 +1729,8 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
 
         body = soup.body or soup
         body_style = computed_style(body, sheet, {}) if isinstance(body, Tag) else {}
-        pages = find_page_containers(soup, sheet, dpi)
+        pages = find_page_containers(soup, sheet, dpi,
+                                     (real_page or fallback)[1] * dpi)
 
         resolver.html_dir = os.path.dirname(html_path)
 
