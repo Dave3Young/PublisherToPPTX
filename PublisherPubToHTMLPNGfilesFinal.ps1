@@ -191,7 +191,7 @@ function Export-PublisherPictures
                         "Exporting image $($PictureCounter.Value) from $PageLabel $PageNumber..."
 
                     $shape.SaveAsPicture(
-                        $pngFilePath,
+                        [string]$pngFilePath,
                         $PNG_RESOLUTION
                     )
 
@@ -486,7 +486,7 @@ function Export-PublisherTextShapes
                     try {
 
                         $shape.SaveAsPicture(
-                            $pngFilePath,
+                            [string]$pngFilePath,
                             $PNG_RESOLUTION
                         )
 
@@ -585,7 +585,9 @@ try {
         $page = $null
 
         $fileFullName = $file.FullName
-        $baseName = $file.BaseName
+        # Trimmed: Windows can't hold a folder or file name ending in a
+        # space, so "My Flyer .pub" would otherwise fail to export.
+        $baseName = $file.BaseName.Trim()
         $sourceDirectory = $file.DirectoryName
 
         # --------------------------------------------------------
@@ -911,8 +913,10 @@ try {
 
                 try {
 
+                    # [string]: Publisher 2010's SaveAs hangs when handed
+                    # Join-Path's wrapped PowerShell object instead of a string.
                     $doc.SaveAs(
-                        $htmlBasePath,
+                        [string]$htmlBasePath,
                         $HTML_FILTERED_FORMAT,
                         $false
                     )

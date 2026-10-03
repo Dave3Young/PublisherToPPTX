@@ -61,6 +61,9 @@ from urllib.parse import unquote
 
 try:
     from bs4 import BeautifulSoup, NavigableString, Tag
+    # Base of Comment, Doctype, CData etc.: strings that are not page text.
+    # Publisher 2010 puts its VML shape markup in <!--[if gte vml 1]> comments.
+    from bs4.element import PreformattedString
 except ImportError:
     sys.exit("Missing dependency. Run:  pip install beautifulsoup4 lxml python-pptx Pillow")
 
@@ -406,6 +409,8 @@ class Converter:
 
         def emit(node, style):
             nonlocal current
+            if isinstance(node, PreformattedString):
+                return
             if isinstance(node, NavigableString):
                 raw = str(node)
                 if str(style.get("white-space", "")).lower().startswith("pre"):
@@ -528,6 +533,10 @@ class Converter:
                 span = max(1, int(cell.get("colspan", 1) or 1))
                 cw = sum(col_w[ci:ci + span]) if ci < ncols else col_w[-1]
                 cs = computed_style(cell, sheet, inherited)
+                # Publisher sets the height on the cells, not the row
+                cell_h = to_px(cs.get("height") or cell.get("height"), self.dpi)
+                if cell_h and int(cell.get("rowspan", 1) or 1) == 1:
+                    declared_h = max(declared_h or 0.0, cell_h)
                 if cell.name == "th":
                     cs.setdefault("font-weight", "bold")
                 paras = self.collect_paras(cell, sheet, cs, stop_nodes)
@@ -550,7 +559,13 @@ class Converter:
                     self.order += 1
                     boxes.append(Box(kind="rect", x=cx, y=cy, w=cw, h=row_h[ri],
                                      fill=fill, order=self.order, note="table cell fill"))
-                if paras:
+                if cell.find(["img", "table"]) is not None:
+                    # pictures or a nested table: lay the cell out like a container
+                    cell_style = {k: v for k, v in cs.items()
+                                  if not k.startswith(("background", "border"))}
+                    self._emit_node(cell, sheet, cell_style, (cx, cy), cw, row_h[ri],
+                                    boxes, stop_nodes)
+                elif paras:
                     self.order += 1
                     boxes.append(Box(kind="text", x=cx + pad, y=cy + pad,
                                      w=max(cw - 2 * pad, 8.0),
@@ -576,6 +591,8 @@ class Converter:
         def scan(node, cur_style):
             nonlocal buf_style
             for child in node.children:
+                if isinstance(child, PreformattedString):
+                    continue
                 if isinstance(child, NavigableString):
                     if str(child).strip():
                         if not buf:
@@ -684,6 +701,12 @@ class Converter:
                 self.order += 1
                 boxes.append(Box(kind="image", x=x, y=y, w=w, h=h, src=src,
                                  order=self.order, note=el.get("alt") or ""))
+            return
+
+        if el.name.lower() == "table":
+            # a positioned table: keep its cell grid instead of flowing the cells
+            tb, _ = self._table_boxes(el, sheet, style, x, y, w, h, stop_nodes)
+            boxes.extend(tb)
             return
 
         pad_l = to_px(style.get("padding-left"), self.dpi, w) or 0.0
