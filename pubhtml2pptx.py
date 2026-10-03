@@ -40,6 +40,8 @@ Options
     --dpi N             CSS pixels per inch, default 96
     --hires             swap web images for the matching 300dpi COM PNG
     --no-extras         do not append slides for scratch-area PNGs/text
+    --reflow            let text wrap freely instead of breaking lines where
+                        Publisher does
     --page-size WxH     fallback page size in inches when stage 1 recorded none,
                         default 8.5x11
     --report            write <basename>_conversion_report.txt beside the pptx
@@ -53,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -371,6 +374,7 @@ class Para:
     line_spacing: Optional[float] = None
     indent_pt: float = 0.0            # first line, from the left indent; may be negative
     left_indent_pt: float = 0.0
+    keep_lines: bool = False          # lines broken where Publisher breaks them
     tab_stops: list = field(default_factory=list)    # [(pos_pt, PbTabAlignmentType)]
     pub: Optional[dict] = None        # stage 1's record for this paragraph
     pub_placed: bool = False          # pub was found at this paragraph's place
@@ -400,6 +404,7 @@ class Box:
     geom: str = "rect"             # rect: a SHAPE_GEOMS key
     adj: tuple = ()                # rect: the preset's adjustment values
     dash: Optional[str] = None     # rect: a LINE_DASHES key
+    z: Optional[int] = None        # z-index of the positioned shape it came from
 
 
 # Font files for measuring inline text. ImageFont.truetype finds these in
@@ -490,8 +495,8 @@ _NBSP_RUN_RE = re.compile("(\xa0{2,} ?)")
 _WS_RUN_RE = re.compile("([ \xa0]*\xa0[ \xa0]*)")
 TAB_STOP_PT = 36.0               # Publisher's default tab stops: every half inch
 INLINE_PICTURE_GAP_PT = 2.88     # Publisher's default spacing around a picture
-# Publisher puts a line's extra spacing (above single spacing) below the text;
-# PowerPoint, given exact line spacing, puts about this share of it above.
+# Publisher puts a line's extra spacing (above single spacing) below the text,
+# or above it for exact spacing; PowerPoint puts about this share of it above.
 PPT_EXTRA_ABOVE = 0.66
 
 
@@ -565,12 +570,33 @@ def load_pub_text(export_dir: str, base: str) -> dict:
         tops = sorted(set(par.get("lineTops") or []))
         # each line on a row of its own: its row's top places it
         rows = len(lines) > 1 and par.get("top") is not None and len(tops) == len(lines)
+        # with each line's start, every wrapped line's top is known too
+        starts = par.get("lineStarts") or []
+        all_tops = par.get("lineTops") or []
+        wrapped = (len(lines) > 1 and not rows and par.get("top") is not None
+                   and len(starts) == len(all_tops))
+        offset = 0                             # the line's start, in UTF-16 units
         for i, line in enumerate(lines):
+            size = len(line.encode("utf-16-le")) // 2
             key = pub_key(line)
             if key:
                 rec = {**par, "text": line,
                        "firstIndent": par.get("firstIndent", 0) if i == 0 else 0}
-                if rows:
+                ks = [k for k, s in enumerate(starts) if offset <= s < offset + max(size, 1)]
+                if len(lines) > 1:
+                    # this line's own line starts, from its start
+                    rec["lineStarts"] = [starts[k] - offset for k in ks]
+                if wrapped and ks and starts[ks[0]] == offset:
+                    end = all_tops[ks[-1] + 1] if ks[-1] + 1 < len(all_tops) else (
+                        par["top"] + (par.get("height") or 0.0))
+                    first = all_tops[ks[0]]
+                    rec.update(top=first, height=end - first,
+                               lineTops=[all_tops[k] for k in ks],
+                               spaceBefore=par.get("spaceBefore", 0) if i == 0 else 0,
+                               spaceAfter=par.get("spaceAfter", 0) if i + 1 == len(lines) else 0)
+                elif wrapped:
+                    rec["top"] = None
+                elif rows:
                     end = tops[i + 1] if i + 1 < len(tops) else (
                         par["top"] + (par.get("height") or 0.0))
                     rec.update(top=tops[i], height=end - tops[i], lineTops=[tops[i]],
@@ -579,6 +605,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
                 elif len(lines) > 1:
                     rec["top"] = None          # a line's own position isn't recorded
                 index.setdefault(key, []).append(rec)
+            offset += size + 1
 
     for shape in data.get("shapes", []):
         for par in shape.get("paragraphs") or []:
@@ -616,7 +643,9 @@ def apply_pub_whitespace(runs: list, pub_text: str) -> bool:
         if not tok:
             continue
         if tok.isspace():
-            spans.append((pos, pos + len(tok), p_gaps.get(wi, tok)))
+            # Publisher has no space before its first word or after its last
+            edge = wi == 0 or wi == len(p_words)
+            spans.append((pos, pos + len(tok), p_gaps.get(wi, "" if edge else tok)))
         else:
             wi += 1
         pos += len(tok)
@@ -636,6 +665,76 @@ def apply_pub_whitespace(runs: list, pub_text: str) -> bool:
         run.text = "".join(out)
     return True
 
+
+_SOFT_HYPHENS = "\x1f\xad"
+
+
+def _utf16_index(text: str, offset: int) -> int:
+    """The str index of a UTF-16 offset, as Publisher counts characters."""
+    n = 0
+    for i, ch in enumerate(text):
+        if n >= offset:
+            return i
+        n += 2 if ord(ch) > 0xFFFF else 1
+    return len(text)
+
+
+def _pub_line_breaks(para, rec: dict) -> bool:
+    """Breaks the paragraph's lines where Publisher does, from stage 1's
+    lineStarts, so text wraps the same as in Publisher even where it
+    hyphenates a word or wraps around a picture. A word Publisher hyphenates
+    gets a hyphen. True if the paragraph is now on Publisher's lines (a
+    one-line paragraph already is); False, changing nothing, if the text isn't
+    Publisher's or stage 1 didn't record its lines."""
+    text = str(rec.get("text", ""))
+    starts = rec.get("lineStarts") or []
+    full = "".join(r.text for r in para.runs)
+    if not starts or full.rstrip() != text.rstrip():
+        return False
+    breaks = {}                                # str index -> (cut from, insert)
+    for s in starts:
+        i = _utf16_index(text, s)
+        if not 0 < i < len(full.rstrip()):
+            continue
+        j = i
+        while j > 0 and full[j - 1] in " \xa0":
+            j -= 1                            # the spaces at the wrap go
+        if j == 0 or full[j - 1] in "\v\n\t":
+            continue
+        if j < i:
+            breaks[j] = (i, "\v")
+        elif full[j - 1] in _SOFT_HYPHENS:
+            breaks[j - 1] = (i, "-\v")
+        elif full[j - 1].isalnum() and full[i].isalnum():
+            breaks[i] = (i, "-\v")            # Publisher hyphenated the word
+        else:
+            breaks[i] = (i, "\v")
+    if not breaks:
+        return True
+    pos, skip_to = 0, 0
+    for run in para.runs:
+        out = []
+        for k, ch in enumerate(run.text):
+            g = pos + k
+            if g in breaks:
+                out.append(breaks[g][1])
+                skip_to = breaks[g][0]
+                if skip_to > g:
+                    continue
+            if g < skip_to:
+                continue
+            out.append(ch)
+        pos += len(run.text)
+        run.text = "".join(out)
+    return True
+
+
+# PowerPoint can set text up to about 2% wider than Publisher (it varies with
+# the font and size), so a line Publisher just fits would wrap again before its
+# break. Lines measuring within this share of the width are tightened to fit,
+# by at most KEEP_LINES_MAX_SPC of the font size per character.
+KEEP_LINES_SLACK = 0.025
+KEEP_LINES_MAX_SPC = 0.05
 
 _SPACE_RUN_RE = re.compile(" {8,}")
 
@@ -688,19 +787,23 @@ def snap_to_tab(pos: float, width: float, nbsp_w: float, stop: float) -> Optiona
     return None
 
 
-def text_width_px(text: str, family: Optional[str], size_px: float) -> float:
+def text_width_px(text: str, family: Optional[str], size_px: float,
+                  bold: bool = False, italic: bool = False) -> float:
     """Width of a run of text, measured with the real font where possible."""
     if not text:
         return 0.0
     if HAVE_PIL:
-        key = ((font_name(family) or "").lower(), round(size_px * 4))
+        name = (font_name(family) or "").lower()
+        style = " ".join(s for s, on in (("bold", bold), ("italic", italic)) if on)
+        key = (name, style, round(size_px * 4))
         if key not in _font_cache:
             font = None
-            fname = FONT_FILES.get(key[0]) or installed_fonts().get(key[0])
+            fname = ((installed_fonts().get(f"{name} {style}") if style else None)
+                     or FONT_FILES.get(name) or installed_fonts().get(name))
             if fname:
                 try:
                     from PIL import ImageFont
-                    font = ImageFont.truetype(fname, max(int(round(size_px * 4)), 1))
+                    font = ImageFont.truetype(fname, max(key[2], 1))
                 except (OSError, ImportError):
                     font = None
             _font_cache[key] = font
@@ -725,6 +828,8 @@ class Converter:
         self.dpi = float(args.dpi)
         self.args = args
         self.warn = warn
+        # break lines where Publisher does, unless asked to let text reflow
+        self.keep_lines = not getattr(args, "reflow", False)
         self.order = 0
         # space after the last block _emit_node placed
         self.trailing = 0.0
@@ -848,7 +953,9 @@ class Converter:
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
                 p.pub, p.pub_placed = rec, placed
-                _space_breaks(p, rec)
+                p.keep_lines = self.keep_lines and _pub_line_breaks(p, rec)
+                if not p.keep_lines:
+                    _space_breaks(p, rec)
                 # Publisher's indents: the HTML leaves out hanging ones
                 p.left_indent_pt = max(float(rec.get("leftIndent") or 0.0), 0.0)
                 p.indent_pt = max(float(rec.get("firstIndent") or 0.0), -p.left_indent_pt)
@@ -954,6 +1061,11 @@ class Converter:
             # how far PowerPoint would put this paragraph's text below Publisher's
             multiple = pub_line_multiple(rec) if rec.get("lineRule") in (0, 1, 2, 5) else None
             lift = PPT_EXTRA_ABOVE * line * (1.0 - 1.0 / multiple) if multiple and multiple > 1 else 0.0
+            sizes = [r.size_pt for r in p.runs if r.size_pt and r.text]
+            if rec.get("lineRule") == 3 and sizes:
+                # exact spacing: Publisher puts all the extra above the text.
+                # (rec's size is -9999999 when the paragraph mixes sizes.)
+                lift = -(1.0 - PPT_EXTRA_ABOVE) * (line - 1.2 * max(sizes))
             settings.append([line, nxt - tops[-1] - line, lift])
         # raise each paragraph by its lift: the box by the first one's, and
         # each later one through the space after the paragraph before it
@@ -1038,15 +1150,18 @@ class Converter:
         ncols = max(ncols, 1)
         w = w or to_px(table.get("width"), self.dpi) or 400.0
 
-        declared = []
-        for c in grid[0]:
-            cs = computed_style(c, sheet, inherited)
-            declared.append(to_px(cs.get("width") or c.get("width"), self.dpi, w))
-        if len(declared) == ncols and all(d for d in declared):
-            total = sum(declared)
-            col_w = [d * w / total for d in declared]
-        else:
-            col_w = [w / ncols] * ncols
+        # column widths from the first row with a cell per column, since a
+        # cell spanning columns doesn't say how its width divides
+        col_w = [w / ncols] * ncols
+        for cells in grid:
+            if len(cells) != ncols:
+                continue
+            declared = [to_px(computed_style(c, sheet, inherited).get("width") or c.get("width"),
+                              self.dpi, w) for c in cells]
+            if all(d for d in declared):
+                total = sum(declared)
+                col_w = [d * w / total for d in declared]
+                break
 
         # row heights from declared values, else from estimated content
         row_h, cell_paras = [], []
@@ -1462,15 +1577,26 @@ class Converter:
             x, y, w, h = self._box_geometry(child, cstyle, origin, cb_w, cb_h)
             new_w = w if w is not None else max(cb_w - (x - origin[0]), 1.0)
             new_h = h if h is not None else max(cb_h - (y - origin[1]), 1.0)
+            first = len(boxes)
             if child.name.lower() == "img":
                 src = unquote(child.get("src") or "")
                 if src:
                     self.order += 1
+                    adj = tuple(float(v) for v in str(cstyle.get("x-adj") or "").split())
                     boxes.append(Box(kind="image", x=x, y=y, w=new_w, h=new_h,
                                      src=src, order=self.order,
-                                     note=child.get("alt") or ""))
+                                     note=child.get("alt") or "",
+                                     geom=cstyle.get("x-geom") or "rect", adj=adj))
+            else:
+                self.walk(child, sheet, cstyle, (x, y), new_w, new_h, boxes, depth + 1)
+            # Publisher's stacking order is the z-index, not the order in the file
+            try:
+                z = int(str(cstyle.get("z-index") or "").strip())
+            except ValueError:
                 continue
-            self.walk(child, sheet, cstyle, (x, y), new_w, new_h, boxes, depth + 1)
+            for b in boxes[first:]:
+                if b.z is None:
+                    b.z = z
 
     def _emit_node(self, el: Tag, sheet: StyleSheet, style: dict,
                    origin, cb_w, cb_h, boxes: list, stop_nodes: set) -> float:
@@ -1495,10 +1621,10 @@ class Converter:
                     border_w = bw
         if border is not None and border_w == 0.0:
             border_w = 1.0
+        # a rebuilt VML text box or picture says which outline shape it had
+        adj = tuple(float(v) for v in str(style.get("x-adj") or "").split())
         if (fill is not None or border is not None) and w and h:
             self.order += 1
-            # a rebuilt VML text box says which outline shape it had
-            adj = tuple(float(v) for v in str(style.get("x-adj") or "").split())
             boxes.append(Box(kind="rect", x=x, y=y, w=w, h=h, fill=fill,
                              line=border, line_w_px=border_w, order=self.order,
                              geom=style.get("x-geom") or "rect", adj=adj,
@@ -1509,7 +1635,8 @@ class Converter:
             if src:
                 self.order += 1
                 boxes.append(Box(kind="image", x=x, y=y, w=w, h=h, src=src,
-                                 order=self.order, note=el.get("alt") or ""))
+                                 order=self.order, note=el.get("alt") or "",
+                                 geom=style.get("x-geom") or "rect", adj=adj))
             return h
 
         if el.name.lower() == "table":
@@ -1683,6 +1810,39 @@ def _vml_text_area(shape: Tag, shapetype: Optional[Tag], geom: str, adj: tuple,
     return (0.0, 0.0, 0.0, 0.0)
 
 
+def restore_vml_pictures(soup: BeautifulSoup) -> int:
+    """A picture cropped to a shape (a rounded rectangle, say) can come only in
+    the VML, with no <img> for other browsers. Adds a positioned <img> for each,
+    saying which shape crops it. Returns how many were added."""
+    shown = {el.get("v:shapes") for el in soup.find_all(attrs={"v:shapes": True})}
+    count = 0
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
+        vml = BeautifulSoup(str(c), "html.parser")
+        for shape in vml.find_all(["v:shape", "v:rect", "v:roundrect", "v:oval"]):
+            data = shape.find("v:imagedata", recursive=False)
+            decl = parse_decls(shape.get("style", ""))
+            if (data is None or not data.get("src") or shape.get("id") in shown
+                    or shape.find_parent("v:group") or decl.get("rotation")
+                    or str(decl.get("position", "")).lower() != "absolute"):
+                continue
+            geom, adj = _vml_outline(shape) or ("rect", ())
+            styles = ["position:absolute"] + [
+                f"{k}:{_vml_pt(decl.get(k)):.2f}pt" for k in ("left", "top", "width", "height")]
+            if decl.get("z-index"):
+                styles.append(f"z-index:{decl['z-index']}")
+            if geom != "rect":
+                styles.append(f"x-geom:{geom}")
+                if adj:
+                    styles.append("x-adj:" + " ".join(f"{v:.5f}" for v in adj))
+            img = soup.new_tag("img", src=data["src"], style=";".join(styles),
+                               alt=shape.get("alt") or "")
+            img["v:shapes"] = shape.get("id") or ""
+            c.insert_after(img)
+            shown.add(shape.get("id"))
+            count += 1
+    return count
+
+
 def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
     """Publisher exports some text boxes (filled ones, for instance) as a
     picture of the text, keeping the real text only in the VML inside an
@@ -1749,6 +1909,8 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
             styles.append(f"x-geom:{geom}")
         if adj:
             styles.append("x-adj:" + " ".join(f"{v:.5f}" for v in adj))
+        if decl.get("z-index"):
+            styles.append(f"z-index:{decl['z-index']}")
         div = soup.new_tag("div", style=";".join(styles))
         for child in list((inner or box).children):
             div.append(child.extract())
@@ -1894,12 +2056,63 @@ def px_to_emu(px: float, dpi: float) -> int:
     return int(round(px / dpi * EMU_PER_INCH))
 
 
+def _line_sizes(para) -> set:
+    """The largest font size on each line of a paragraph, spaces included;
+    None for a run with no size."""
+    sizes, line = set(), []
+    for run in para.runs:
+        for k, piece in enumerate(run.text.split("\v")):
+            if k and line:
+                sizes.add(max(line, key=lambda s: s or 0.0) if None not in line else None)
+                line = []
+            if piece:
+                line.append(run.size_pt)
+    if line:
+        sizes.add(max(line, key=lambda s: s or 0.0) if None not in line else None)
+    return sizes
+
+
+def _line_tightening(para, width_pt: float) -> dict:
+    """Letter spacing (pt) to take off each line of a paragraph kept on
+    Publisher's lines, keyed by line number, for lines that only just fit."""
+    lines = [[]]
+    for run in para.runs:
+        for k, piece in enumerate(run.text.split("\v")):
+            if k:
+                lines.append([])
+            lines[-1].append((run, piece))
+    stops = sorted(pos for pos, _ in para.tab_stops)
+    out = {}
+    for i, pieces in enumerate(lines):
+        # where the line ends, with PowerPoint's extra width, following tabs
+        # to their stops; only the text after the last tab can be squeezed
+        x = para.left_indent_pt + (para.indent_pt if i == 0 else 0.0)
+        chars = 0
+        for k, (run, piece) in enumerate(pieces):
+            if k == len(pieces) - 1:
+                piece = piece.rstrip()
+            for j, seg in enumerate(piece.split("\t")):
+                if j:
+                    x = next_tab_px(x, stops, TAB_STOP_PT)
+                    chars = 0
+                x += (text_width_px(seg, run.font, run.size_pt or 12.0, bool(run.bold),
+                                    bool(run.italic)) * (1.0 + KEEP_LINES_SLACK)
+                      + (run.spacing_pt or 0.0) * len(seg))
+                chars += len(seg)
+        need = x - width_pt
+        if need > 0 and chars:
+            size = max((run.size_pt or 12.0) for run, _ in pieces)
+            # PowerPoint's letter spacing is in hundredths of a point
+            out[i] = min(math.ceil(need / chars * 100) / 100, KEEP_LINES_MAX_SPC * size)
+    return out
+
+
 def build_slide(prs, boxes, resolver, dpi, warn, verbose):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     sw_px = prs.slide_width / EMU_PER_INCH * dpi
     sh_px = prs.slide_height / EMU_PER_INCH * dpi
 
-    for b in sorted(boxes, key=lambda z: z.order):
+    for b in sorted(boxes, key=lambda z: (z.z or 0, z.order)):
         w = max(b.w or 1.0, 1.0)
         h = max(b.h or 1.0, 1.0)
         # keep shapes from running miles off the canvas
@@ -1913,9 +2126,18 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
             if not path:
                 continue
             try:
-                slide.shapes.add_picture(path, left, top, width, height)
+                pic = slide.shapes.add_picture(path, left, top, width, height)
             except Exception as exc:                   # noqa: BLE001
                 warn(f"could not place image {os.path.basename(path)}: {exc}")
+                continue
+            if b.geom in SHAPE_GEOMS and b.geom != "rect":
+                # cropped to a shape, as in Publisher
+                pic.auto_shape_type = SHAPE_GEOMS[b.geom]
+                av = pic._element.spPr.find(qn("a:prstGeom")).find(qn("a:avLst"))
+                for i, v in enumerate(b.adj):
+                    av.append(av.makeelement(qn("a:gd"), {
+                        "name": "adj" if i == 0 else f"adj{i + 1}",
+                        "fmla": f"val {int(round(v * 100000))}"}))
             continue
 
         if b.kind == "rect":
@@ -1945,11 +2167,19 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
         tf.vertical_anchor = {"middle": MSO_ANCHOR.MIDDLE,
                               "bottom": MSO_ANCHOR.BOTTOM}.get(b.anchor, MSO_ANCHOR.TOP)
+        # PowerPoint rounds spacing in points to whole points, so each
+        # paragraph's rounding is carried into the next one's space after
+        carry = 0.0
         for pi, para in enumerate(b.paras):
             p = tf.paragraphs[0] if pi == 0 else tf.add_paragraph()
             if para.align is not None:
                 p.alignment = para.align
-            if para.exact_line_pt:
+            sizes = _line_sizes(para)
+            if para.exact_line_pt and len(sizes) == 1 and None not in sizes:
+                # a multiple isn't rounded: PowerPoint's single spacing is
+                # 1.2 times the largest font size on the line, whatever the font
+                p.line_spacing = para.exact_line_pt / (1.2 * sizes.pop())
+            elif para.exact_line_pt:
                 p.line_spacing = Pt(para.exact_line_pt)
             elif para.line_spacing:
                 p.line_spacing = para.line_spacing
@@ -1970,13 +2200,23 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                 # has no API for either
                 p._p.get_or_add_pPr().set("indent", str(int(Pt(
                     max(min(para.indent_pt, 144), -para.left_indent_pt)))))
-            if para.space_after_pt:
-                p.space_after = Pt(min(para.space_after_pt, 48))
+            if para.space_after_pt or carry:
+                want = min(para.space_after_pt, 48) + carry
+                after = max(round(want), 0)
+                carry = want - after
+                if after:
+                    p.space_after = Pt(after)
+            tighten = _line_tightening(para, w * 72.0 / dpi) if para.keep_lines else {}
+            line = 0
             for run in para.runs:
                 # "\v" is a line break inside the paragraph
                 for k, piece in enumerate(run.text.split("\v")):
                     if k:
+                        line += 1
                         p.add_line_break()
+                        if run.size_pt:
+                            # sized like its line: a bare break is 18pt
+                            p._p[-1].get_or_add_rPr().set("sz", str(int(run.size_pt * 100)))
                     if not piece:
                         continue
                     r = p.add_run()
@@ -1993,8 +2233,9 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                     rpr = r._r.get_or_add_rPr()
                     if run.caps:
                         rpr.set("cap", run.caps)
-                    if run.spacing_pt:
-                        rpr.set("spc", str(int(round(max(min(run.spacing_pt, 100.0), -100.0) * 100))))
+                    spacing = (run.spacing_pt or 0.0) - tighten.get(line, 0.0)
+                    if round(spacing * 100):
+                        rpr.set("spc", str(int(round(max(min(spacing, 100.0), -100.0) * 100))))
         if verbose:
             print(f"    text  {int(b.x):>5},{int(b.y):>5}  {int(w):>4}x{int(h):<4}  "
                   f"{b.paras[0].text()[:40]!r}" if b.paras else "")
@@ -2109,6 +2350,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
             raw = fh.read()
         soup = BeautifulSoup(raw, "lxml")
         restore_vml_text_boxes(soup)
+        restore_vml_pictures(soup)
         sheet = StyleSheet()
         for st in soup.find_all("style"):
             sheet.add_css(st.get_text())
@@ -2349,6 +2591,8 @@ def main(argv=None) -> int:
     ap.add_argument("--dpi", type=float, default=96.0, help="CSS pixels per inch (default 96)")
     ap.add_argument("--hires", action="store_true", help="use the 300dpi COM-exported PNGs")
     ap.add_argument("--no-extras", action="store_true", help="skip scratch-area slides")
+    ap.add_argument("--reflow", action="store_true",
+                    help="let text wrap freely instead of breaking lines where Publisher does")
     ap.add_argument("--page-size", default="8.5x11", help="fallback page size in inches")
     ap.add_argument("--report", action="store_true", help="write a per-file conversion report")
     ap.add_argument("-v", "--verbose", action="store_true")

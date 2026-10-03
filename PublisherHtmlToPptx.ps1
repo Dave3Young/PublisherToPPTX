@@ -48,6 +48,10 @@ param
     [switch]
     $NoExtras,
 
+    # Let text wrap freely instead of breaking each line where Publisher does.
+    [switch]
+    $Reflow,
+
     # Write <BaseName>_conversion_report.txt beside each .pptx.
     [switch]
     $Report,
@@ -215,6 +219,7 @@ $arguments += $Path
 if ($Recurse)  { $arguments += "--recurse" }
 if ($HiRes)    { $arguments += "--hires" }
 if ($NoExtras) { $arguments += "--no-extras" }
+if ($Reflow)   { $arguments += "--reflow" }
 if ($Report)   { $arguments += "--report" }
 
 if ($PSBoundParameters.ContainsKey("Verbose")) {

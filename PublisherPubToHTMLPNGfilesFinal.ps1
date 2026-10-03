@@ -323,7 +323,10 @@ function Get-PublisherParagraphs
             # of each of its lines. Lines() runs on past the paragraph, and
             # past the end of the text it keeps returning the last line, so
             # stop at a line that starts after the paragraph or doesn't move on.
+            # lineStarts holds where each line starts in the paragraph's text,
+            # so stage 2 can break lines where Publisher does.
             $lineTops = New-Object System.Collections.Generic.List[double]
+            $lineStarts = New-Object System.Collections.Generic.List[int]
             $top = $null
             $left = $null
             $height = $null
@@ -351,6 +354,7 @@ function Get-PublisherParagraphs
 
                     $prevStart = $line.Start
                     $lineTops.Add($lineTop)
+                    $lineStarts.Add([int]($line.Start - $para.Start))
                 }
             }
             catch { }
@@ -360,6 +364,7 @@ function Get-PublisherParagraphs
                 left        = $left
                 height      = $height
                 lineTops    = $lineTops
+                lineStarts  = $lineStarts
                 text        = $texts[$i - 1]
                 align       = [int]$format.Alignment
                 firstIndent = [double]$format.FirstLineIndent
