@@ -1,0 +1,109 @@
+{
+    "version":  1,
+    "units":  "pt",
+    "shapes":  [
+                   {
+                       "page":  1,
+                       "name":  "Text Box 2",
+                       "left":  292,
+                       "top":  72,
+                       "width":  248,
+                       "height":  200,
+                       "valign":  0,
+                       "margins":  [
+                                       2.880000114440918,
+                                       2.880000114440918,
+                                       2.880000114440918,
+                                       2.880000114440918
+                                   ],
+                       "paragraphs":  [
+                                          {
+                                              "top":  74.8125228881836,
+                                              "left":  294.75,
+                                              "height":  52.5,
+                                              "lineTops":  [
+                                                               74.8125228881836,
+                                                               98.0625228881836
+                                                           ],
+                                              "text":  "This text box sits to the right of image A, top-aligned with it.",
+                                              "align":  0,
+                                              "firstIndent":  0,
+                                              "leftIndent":  0,
+                                              "rightIndent":  0,
+                                              "spaceBefore":  0,
+                                              "spaceAfter":  6,
+                                              "lineSpacing":  1.190000057220459,
+                                              "lineRule":  5,
+                                              "font":  "Calibri",
+                                              "size":  16,
+                                              "tabs":  [
+
+                                                       ]
+                                          },
+                                          {
+                                              "top":  127.31252288818359,
+                                              "left":  294.75,
+                                              "height":  52.5,
+                                              "lineTops":  [
+                                                               127.31252288818359,
+                                                               150.56251525878906
+                                                           ],
+                                              "text":  "Image B sits below, with a text box to its left.",
+                                              "align":  0,
+                                              "firstIndent":  0,
+                                              "leftIndent":  0,
+                                              "rightIndent":  0,
+                                              "spaceBefore":  0,
+                                              "spaceAfter":  6,
+                                              "lineSpacing":  1.190000057220459,
+                                              "lineRule":  5,
+                                              "font":  "Calibri",
+                                              "size":  16,
+                                              "tabs":  [
+
+                                                       ]
+                                          }
+                                      ]
+                   },
+                   {
+                       "page":  1,
+                       "name":  "Text Box 3",
+                       "left":  72,
+                       "top":  300,
+                       "width":  248,
+                       "height":  200,
+                       "valign":  0,
+                       "margins":  [
+                                       2.880000114440918,
+                                       2.880000114440918,
+                                       2.880000114440918,
+                                       2.880000114440918
+                                   ],
+                       "paragraphs":  [
+                                          {
+                                              "top":  302.81253051757813,
+                                              "left":  74.8125228881836,
+                                              "height":  52.5,
+                                              "lineTops":  [
+                                                               302.81253051757813,
+                                                               326.06253051757813
+                                                           ],
+                                              "text":  "This text box sits to the left of image B.",
+                                              "align":  0,
+                                              "firstIndent":  0,
+                                              "leftIndent":  0,
+                                              "rightIndent":  0,
+                                              "spaceBefore":  0,
+                                              "spaceAfter":  6,
+                                              "lineSpacing":  1.190000057220459,
+                                              "lineRule":  5,
+                                              "font":  "Calibri",
+                                              "size":  16,
+                                              "tabs":  [
+
+                                                       ]
+                                          }
+                                      ]
+                   }
+               ]
+}

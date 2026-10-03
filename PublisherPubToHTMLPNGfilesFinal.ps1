@@ -274,6 +274,229 @@ function Export-PublisherPictures
 
 
 # ------------------------------------------------------------
+# Text layout export
+#
+# Publisher's HTML export writes tabs as runs of spaces and leaves
+# out tab stops, and some of its spacing is wrong. This records each
+# paragraph's real text and formatting, in points, for stage 2 to
+# match to the HTML by its words.
+# ------------------------------------------------------------
+
+function Get-PublisherParagraphs
+{
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        $TextRange
+    )
+
+    $paragraphs = New-Object System.Collections.Generic.List[object]
+
+    # Paragraphs end in a carriage return; the text after the last one is empty.
+    $texts = ([string]$TextRange.Text) -split "`r"
+
+    for ($i = 1; $i -le $texts.Count; $i++) {
+
+        if ($texts[$i - 1].Length -eq 0) {
+            continue
+        }
+
+        try {
+
+            $para = $TextRange.Paragraphs($i, 1)
+            $format = $para.ParagraphFormat
+
+            $tabs = New-Object System.Collections.Generic.List[object]
+            $tabStops = $format.Tabs
+
+            for ($t = 1; $t -le $tabStops.Count; $t++) {
+
+                $stop = $tabStops.Item($t)
+
+                $tabs.Add([ordered]@{
+                    pos   = [double]$stop.Position
+                    align = [int]$stop.Alignment
+                })
+            }
+
+            # Where Publisher puts the paragraph on the page, and the top
+            # of each of its lines. Lines() runs on past the paragraph, and
+            # past the end of the text it keeps returning the last line, so
+            # stop at a line that starts after the paragraph or doesn't move on.
+            $lineTops = New-Object System.Collections.Generic.List[double]
+            $top = $null
+            $left = $null
+            $height = $null
+
+            try {
+
+                $top = [double]$para.BoundTop
+                $left = [double]$para.BoundLeft
+                $height = [double]$para.BoundHeight
+                $paraEnd = $para.Start + $para.Length
+                $prevStart = -1
+
+                for ($k = 1; $k -le 500; $k++) {
+
+                    $line = $para.Lines($k, 1)
+
+                    $lineTop = [double]$line.BoundTop
+
+                    if ($line.Length -eq 0 -or
+                        $line.Start -ge $paraEnd -or
+                        $line.Start -le $prevStart -or
+                        ($lineTops.Count -gt 0 -and $lineTop -le $lineTops[$lineTops.Count - 1])) {
+                        break
+                    }
+
+                    $prevStart = $line.Start
+                    $lineTops.Add($lineTop)
+                }
+            }
+            catch { }
+
+            $paragraphs.Add([ordered]@{
+                top         = $top
+                left        = $left
+                height      = $height
+                lineTops    = $lineTops
+                text        = $texts[$i - 1]
+                align       = [int]$format.Alignment
+                firstIndent = [double]$format.FirstLineIndent
+                leftIndent  = [double]$format.LeftIndent
+                rightIndent = [double]$format.RightIndent
+                spaceBefore = [double]$format.SpaceBefore
+                spaceAfter  = [double]$format.SpaceAfter
+                lineSpacing = [double]$format.LineSpacing
+                lineRule    = [int]$format.LineSpacingRule
+                font        = [string]$para.Font.Name
+                size        = [double]$para.Font.Size
+                tabs        = $tabs
+            })
+        }
+        catch {
+
+            Write-Warning "Unable to read paragraph $i of a text frame."
+            Write-Warning $_
+        }
+    }
+
+    return ,$paragraphs
+}
+
+function Add-PublisherTextLayout
+{
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        $Shapes,
+
+        [Parameter(Mandatory = $true)]
+        [int]
+        $PageNumber,
+
+        [Parameter(Mandatory = $true)]
+        $Records
+    )
+
+    $shapeCount = $Shapes.Count
+
+    for ($shapeNumber = 1;
+         $shapeNumber -le $shapeCount;
+         $shapeNumber++) {
+
+        try {
+
+            $shape = $Shapes.Item($shapeNumber)
+
+            if ($shape.Type -eq $PB_GROUP) {
+
+                Add-PublisherTextLayout `
+                    -Shapes $shape.GroupItems `
+                    -PageNumber $PageNumber `
+                    -Records $Records
+
+                continue
+            }
+
+            $record = [ordered]@{
+                page   = $PageNumber
+                name   = [string]$shape.Name
+                left   = [double]$shape.Left
+                top    = [double]$shape.Top
+                width  = [double]$shape.Width
+                height = [double]$shape.Height
+            }
+
+            # Shapes without a table or text frame raise here; that is normal.
+            $hasTable = $false
+            try { $hasTable = ($shape.HasTable -eq -1) } catch { }
+
+            if ($hasTable) {
+
+                $cells = New-Object System.Collections.Generic.List[object]
+                $rows = $shape.Table.Rows
+
+                for ($r = 1; $r -le $rows.Count; $r++) {
+
+                    $rowCells = $rows.Item($r).Cells
+
+                    for ($c = 1; $c -le $rowCells.Count; $c++) {
+
+                        # Cells covered by a merge raise; skip them.
+                        try {
+
+                            $cell = $rowCells.Item($c)
+
+                            $cells.Add([ordered]@{
+                                row        = $r
+                                col        = $c
+                                valign     = [int]$cell.VerticalTextAlignment
+                                margins    = @([double]$cell.MarginLeft, [double]$cell.MarginTop,
+                                               [double]$cell.MarginRight, [double]$cell.MarginBottom)
+                                paragraphs = (Get-PublisherParagraphs -TextRange $cell.TextRange)
+                            })
+                        }
+                        catch { }
+                    }
+                }
+
+                $record.cells = $cells
+                $Records.Add($record)
+
+                continue
+            }
+
+            $textRange = $null
+            try {
+                if ($shape.HasTextFrame -eq -1) {
+                    $textRange = $shape.TextFrame.TextRange
+                }
+            }
+            catch { }
+
+            if ($textRange -and $textRange.Length -gt 0) {
+
+                $frame = $shape.TextFrame
+
+                $record.valign = [int]$frame.VerticalTextAlignment
+                $record.margins = @([double]$frame.MarginLeft, [double]$frame.MarginTop,
+                                    [double]$frame.MarginRight, [double]$frame.MarginBottom)
+                $record.paragraphs = (Get-PublisherParagraphs -TextRange $textRange)
+
+                $Records.Add($record)
+            }
+        }
+        catch {
+
+            Write-Warning "Unable to read text layout of a shape on page $PageNumber."
+            Write-Warning $_
+        }
+    }
+}
+
+
+# ------------------------------------------------------------
 # Recursive TEXT export function
 #
 # Used for the scratch area, whose contents never appear in the
@@ -924,6 +1147,69 @@ try {
                 catch {
 
                     Write-Warning "Unable to record the page size."
+                    Write-Warning $_
+                }
+            }
+
+
+            # ====================================================
+            # TEXT LAYOUT
+            # ====================================================
+            # Each paragraph's real text, with its tabs, and its
+            # formatting, for stage 2. Master pages are page 0.
+
+            $textLayoutPath = Join-Path `
+                $outputFolder `
+                ($baseName + "_text.json")
+
+            if (Test-Path $textLayoutPath) {
+
+                Write-Output "Text layout file already exists; not rewriting: $textLayoutPath"
+            }
+            else {
+
+                try {
+
+                    # Bounds snap to screen pixels at the current zoom: about
+                    # 1.8pt at the default 37%, 0.2pt at 400%.
+                    try { $doc.ActiveView.Zoom = 400 } catch { }
+
+                    $layoutRecords = New-Object System.Collections.Generic.List[object]
+
+                    for ($pageNumber = 1; $pageNumber -le $doc.Pages.Count; $pageNumber++) {
+
+                        Add-PublisherTextLayout `
+                            -Shapes $doc.Pages.Item($pageNumber).Shapes `
+                            -PageNumber $pageNumber `
+                            -Records $layoutRecords
+                    }
+
+                    for ($masterNumber = 1; $masterNumber -le $doc.MasterPages.Count; $masterNumber++) {
+
+                        Add-PublisherTextLayout `
+                            -Shapes $doc.MasterPages.Item($masterNumber).Shapes `
+                            -PageNumber 0 `
+                            -Records $layoutRecords
+                    }
+
+                    $layout = [ordered]@{
+                        version = 1
+                        units   = "pt"
+                        shapes  = $layoutRecords
+                    }
+
+                    $json = ConvertTo-Json -InputObject $layout -Depth 10
+
+                    [System.IO.File]::WriteAllText(
+                        [string]$textLayoutPath,
+                        $json,
+                        (New-Object System.Text.UTF8Encoding $false))
+
+                    Write-Output "Text layout: $($layoutRecords.Count) text frame(s) and table(s)"
+                }
+                catch {
+
+                    Write-Warning "Unable to record the text layout."
                     Write-Warning $_
                 }
             }

@@ -8,7 +8,7 @@ The conversion runs in two stages:
 
 | Script | Stage |
 | --- | --- |
-| `PublisherPubToHTMLPNGfilesFinal.ps1` | 1: has Publisher save each `.pub` as filtered HTML and export its pictures as 300 dpi PNGs |
+| `PublisherPubToHTMLPNGfilesFinal.ps1` | 1: has Publisher save each `.pub` as filtered HTML and export its pictures as 300 dpi PNGs, and records the page size and each paragraph's text, formatting and position |
 | `PublisherHtmlToPptx.ps1` | 2: finds Python, installs the packages it needs, and runs `pubhtml2pptx.py` |
 | `pubhtml2pptx.py` | 2: rebuilds each page of the HTML export as a slide |
 
@@ -63,6 +63,17 @@ These settings are at the top of the script:
 | `-SkipInstall` | | Skip the Python package check, which makes repeat runs faster. |
 | `-Verbose` | | Log every shape as it is placed. |
 
+## What stage 1 records beyond the HTML
+Publisher's HTML export loses some layout, so stage 1 also asks Publisher for it directly.
+
+| File | Holds | Stage 2 uses it to |
+| --- | --- | --- |
+| `<name>_pagesize.txt` | The page width and height in inches. | Size the slides. The export sizes its page to the content, sometimes with a broken height. |
+| `<name>_text.json` | Every paragraph's real text (with its tabs), alignment, indents, spacing, line-spacing rule, font, tab stops, and where Publisher puts it on the page. | Put tabs and tab stops back exactly, and place each paragraph, and each line of inline pictures, where Publisher does. |
+
+Stage 2 matches a paragraph in the HTML to `_text.json` by its words and, for repeated text,
+by its position. Exports made before these files existed still convert, using estimates.
+
 ## What gets converted
 | Publisher content | In the `.pptx` |
 | --- | --- |
@@ -87,9 +98,13 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   with a warning.
 - **`-HiRes` matching:** a 300 dpi PNG replaces a web image only when the counts on the page
   agree and the aspect ratios match. Otherwise the web image is kept, with a warning.
-- **Tabs:** Publisher's HTML export writes tabs as runs of spaces. A run that ends
-  within two spaces of a default tab stop (every half inch) becomes a tab again, in
-  left-aligned paragraphs only. Custom tab stops are not in the export, so they are lost.
+- **Tabs without `_text.json`:** Publisher's HTML export writes tabs as runs of spaces.
+  A run that ends within two spaces of a default tab stop (every half inch) becomes a tab
+  again, in left-aligned paragraphs only, and custom tab stops are lost. Re-run stage 1
+  to write `_text.json` and get exact tabs.
+- **Text position:** with `_text.json`, text lands within about 2pt of Publisher. PowerPoint
+  places a line's extra spacing differently from Publisher, and stage 2 corrects for it
+  with one factor for all fonts. Without the file, positions are estimated from the HTML.
 - **Shapes and WordArt:** only what Publisher's HTML export writes out comes through. A
   shape or WordArt the export doesn't write out is missing from the slide.
 
@@ -112,8 +127,8 @@ that space, so their exports are named `petlexia publication2` and `petlexia pub
 
 `bizcard` and `Publication3` keep their export next to the `.pub`. The others were exported
 later and keep stage 1's own layout, a subfolder named after the publication. `bizcard` and
-`Publication3` were exported before stage 1 recorded page sizes, so they have no
-`_pagesize.txt`.
+`Publication3` were exported before stage 1 recorded page sizes and text layout, so they
+have no `_pagesize.txt` or `_text.json`.
 
 `make_sidebyside.ps1` builds the three `sidebyside` samples in Publisher, including a PDF
 showing how each should look. Its test pictures are lettered squares in `sidebyside-images\`,
