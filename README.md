@@ -97,12 +97,16 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
 | --- | --- |
 | `bizcard` | `.pub`, plus the stage 1 HTML and `bizcard_files\` |
 | `Publication3` | `.pub` and the stage 1 HTML (it has no pictures) |
-| `Publication4` | `.pub` only |
-| `petlexia publication`, `petlexia publication2`, `petlexia publication3` | `.pub` only |
+| `Publication4` | `.pub`, plus the stage 1 HTML in `Publication4\` (a blank page) |
+| `petlexia publication`, `petlexia publication2`, `petlexia publication3` | `.pub`, plus the stage 1 HTML and `_files\` in a subfolder of the same name |
 
-The second and third petlexia files are named with a space before `.pub`.
+The second and third petlexia files are named with a space before `.pub`. Stage 1 trims
+that space, so their exports are named `petlexia publication2` and `petlexia publication3`.
 
-To convert the samples that already have an export:
+`bizcard` and `Publication3` keep their export next to the `.pub`. The others were exported
+later and keep stage 1's own layout, a subfolder named after the publication.
+
+To convert the samples:
 
 ```powershell
 .\PublisherHtmlToPptx.ps1 -Path .\samples -Recurse -Report
