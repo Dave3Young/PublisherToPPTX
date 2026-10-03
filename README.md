@@ -67,13 +67,13 @@ These settings are at the top of the script:
 | Publisher content | In the `.pptx` |
 | --- | --- |
 | Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
-| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, line breaks and first-line indents. |
+| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, line breaks, first-line indents and tabs. |
 | Picture | A picture at the same position and size. With `-HiRes`, stage 1's 300 dpi PNG is used. |
 | Pictures inside groups | Exported one by one in stage 1. |
 | Master page pictures | Exported in stage 1. |
 | Filled box | A filled rectangle. |
 | Table | A rectangle for each cell's fill, plus a text box for each cell's text. Cell content is centred vertically unless the cell says otherwise, as in Publisher. |
-| Pictures in a line of text | Placed side by side as in Publisher, with the spaces between them kept. Any words in the line become small text boxes beside the pictures. |
+| Pictures in a line of text | Placed side by side as in Publisher, with the spaces and tabs between them kept. Any words in the line become small text boxes beside the pictures. |
 | Scratch area | Pictures and text left off the page never reach the HTML export, so they go on extra slides at the end. Turn these off with `-NoExtras`. |
 
 BMP, TIFF, WMF, EMF, WebP and ICO images are converted to PNG in an `_pptx_converted`
@@ -87,6 +87,9 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   with a warning.
 - **`-HiRes` matching:** a 300 dpi PNG replaces a web image only when the counts on the page
   agree and the aspect ratios match. Otherwise the web image is kept, with a warning.
+- **Tabs:** Publisher's HTML export writes tabs as runs of spaces. A run that ends
+  within two spaces of a default tab stop (every half inch) becomes a tab again, in
+  left-aligned paragraphs only. Custom tab stops are not in the export, so they are lost.
 - **Shapes and WordArt:** only what Publisher's HTML export writes out comes through. A
   shape or WordArt the export doesn't write out is missing from the slide.
 

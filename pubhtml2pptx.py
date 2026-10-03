@@ -375,6 +375,23 @@ _font_cache: dict = {}
 _HTML_WS_RE = re.compile(r"[ \t\r\n\f]+")
 
 
+# Publisher's HTML export writes a tab as a run of non-breaking spaces sized
+# to roughly reach the next tab stop, then a space. Several typed spaces come
+# out the same way, so a run counts as tabs only when it ends close to a stop.
+_NBSP_RUN_RE = re.compile("(\xa0{2,} ?)")
+TAB_STOP_PT = 36.0               # Publisher's default tab stops: every half inch
+INLINE_PICTURE_GAP_PT = 2.88     # Publisher's default spacing around a picture
+
+
+def snap_to_tab(pos: float, width: float, nbsp_w: float, stop: float) -> Optional[int]:
+    """Tabs a whitespace run at pos stands for, or None if it is just spaces."""
+    end = pos + width
+    k = round(end / stop)
+    if k * stop > pos + 0.5 and abs(k * stop - end) <= 2 * nbsp_w:
+        return k - int(pos // stop)
+    return None
+
+
 def text_width_px(text: str, family: Optional[str], size_px: float) -> float:
     """Width of a run of text, measured with the real font where possible."""
     if not text:
@@ -413,6 +430,8 @@ class Converter:
         self.args = args
         self.warn = warn
         self.order = 0
+        # space after the last block _emit_node placed
+        self.trailing = 0.0
 
     # -- runs and paragraphs ------------------------------------------------
 
@@ -504,7 +523,29 @@ class Converter:
         for p in paras:
             if p.align is None:
                 p.align = base_align
+            if p.align in (None, PP_ALIGN.LEFT):
+                self._restore_tabs(p)
         return [p for p in paras if p.text().strip()]
+
+    def _restore_tabs(self, para: Para) -> None:
+        """Turns the export's tab runs back into tabs, measuring from the frame
+        edge as Publisher does. Assumes the runs fall on the first line."""
+        stop = TAB_STOP_PT * self.dpi / 72.0
+        pos = para.indent_pt * self.dpi / 72.0
+        for run in para.runs:
+            size_px = (run.size_pt or 12.0) * self.dpi / 72.0
+            nbsp_w = text_width_px("\xa0", run.font, size_px)
+            out = []
+            for i, piece in enumerate(_NBSP_RUN_RE.split(run.text)):
+                width = text_width_px(piece, run.font, size_px)
+                tabs = snap_to_tab(pos, width, nbsp_w, stop) if i % 2 else None
+                if tabs:
+                    out.append("\t" * tabs)
+                    pos = (int(pos // stop) + tabs) * stop
+                else:
+                    out.append(piece)
+                    pos += width
+            run.text = "".join(out)
 
     def estimate_height(self, paras: list, width_px: float) -> float:
         """Rough laid-out height, used only to stack sibling content sensibly."""
@@ -617,7 +658,8 @@ class Converter:
                     used = self._emit_node(cell, sheet, cell_style, (cx, cy), cw, row_h[ri],
                                            placed, stop_nodes)
                     pad_b = to_px(cs.get("padding-bottom"), self.dpi) or 0.0
-                    free = max(row_h[ri] - used - pad_b, 0.0)
+                    # like Publisher, centre without the last paragraph's space after
+                    free = max(row_h[ri] - (used - self.trailing) - pad_b, 0.0)
                     dy = {"top": 0.0, "middle": free / 2, "bottom": free}[valign]
                     for b in placed:
                         b.y += dy
@@ -712,22 +754,24 @@ class Converter:
     def _line_boxes(self, para: Tag, sheet: StyleSheet, style: dict,
                     x, y, w, h, boxes: list) -> float:
         """Places a paragraph's pictures and text left to right, wrapping at the
-        frame edge. Spaces, including runs of non-breaking spaces, keep their
-        width. Returns the height used."""
+        frame edge, as Publisher lays out a line with inline pictures. Spaces
+        keep their width, and the export's tab runs snap to tab stops.
+        Returns the height used."""
         items: list = []
         self._inline_items(para, sheet, style, items)
+        gap = INLINE_PICTURE_GAP_PT * self.dpi / 72.0
 
-        measured = []          # (kind, payload, style, width, height)
+        measured = []          # [kind, payload, style, width, height]
         after_space = True
         for kind, payload, st in items:
             if kind == "img":
                 _, _, iw, ih = self._box_geometry(payload, st, (0.0, 0.0), w, h)
                 iw = iw or 50.0
                 ih = ih or iw
-                measured.append(("img", payload, st, iw, ih))
+                measured.append(["img", payload, st, iw + 2 * gap, ih + 2 * gap])
                 after_space = False
             elif kind == "br":
-                measured.append(("br", None, st, 0.0, 0.0))
+                measured.append(["br", None, st, 0.0, 0.0])
                 after_space = True
             else:
                 text = payload.lstrip(" ") if after_space else payload
@@ -736,24 +780,38 @@ class Converter:
                 after_space = text.endswith(" ")
                 size_px = to_px(st.get("font-size", "12pt"), self.dpi) or 16.0
                 fam = (st.get("font-family") or "").split(",")[0].strip().strip("'\"")
-                measured.append(("text", text, st, text_width_px(text, fam, size_px),
-                                 size_px * 1.2))
+                for i, piece in enumerate(_NBSP_RUN_RE.split(text)):
+                    if piece:
+                        measured.append(["space" if i % 2 else "text", piece, st,
+                                         text_width_px(piece, fam, size_px), size_px * 1.2])
 
+        align = str(style.get("text-align", "left")).lower()
+        left_aligned = align not in ("center", "middle", "right")
+        stop = TAB_STOP_PT * self.dpi / 72.0
         indent = to_px(style.get("text-indent"), self.dpi) or 0.0
-        lines, cur, cur_w, avail = [], [], 0.0, w - indent
+        lines, cur, pos = [], [], indent
         for m in measured:
             if m[0] == "br":
                 lines.append(cur)
-                cur, cur_w, avail = [], 0.0, w
+                cur, pos = [], 0.0
                 continue
-            if cur and cur_w + m[3] > avail + 0.5:
+            if m[0] == "space" and left_aligned:
+                size_px = m[4] / 1.2
+                fam = (m[2].get("font-family") or "").split(",")[0].strip().strip("'\"")
+                tabs = snap_to_tab(pos, m[3], text_width_px("\xa0", fam, size_px), stop)
+                if tabs:
+                    m[3] = (int(pos // stop) + tabs) * stop - pos
+            if cur and pos + m[3] > w + 0.5:
                 lines.append(cur)
-                cur, cur_w, avail = [], 0.0, w
+                cur, pos = [], 0.0
+                if m[0] == "space":
+                    continue
             cur.append(m)
-            cur_w += m[3]
+            pos += m[3]
         lines.append(cur)
 
-        align = str(style.get("text-align", "left")).lower()
+        # Publisher shares a line's extra spacing above and below it
+        spacing = self._line_multiple(style)
         cy = y
         for li, line in enumerate(lines):
             if not line:
@@ -766,16 +824,20 @@ class Converter:
                 cx = x + max(w - total, lead)
             else:
                 cx = x + lead
-            line_h = max(m[4] for m in line)
+            content_h = max(m[4] for m in line)
+            extra = content_h * (spacing - 1.0)
+            top = cy + extra / 2
             for kind, payload, st, iw, ih in line:
                 if kind == "img":
                     src = unquote(payload.get("src") or "")
                     if src:
                         self.order += 1
-                        boxes.append(Box(kind="image", x=cx, y=cy + line_h - ih, w=iw, h=ih,
+                        boxes.append(Box(kind="image", x=cx + gap,
+                                         y=top + content_h - ih + gap,
+                                         w=iw - 2 * gap, h=ih - 2 * gap,
                                          src=src, order=self.order,
                                          note=payload.get("alt") or ""))
-                elif payload.strip():
+                elif kind == "text" and payload.strip():
                     run = self._make_run(payload.strip(), st)
                     size_px = ih / 1.2
                     fam = run.font if run else None
@@ -784,15 +846,30 @@ class Converter:
                     vis = text_width_px(payload.strip(), fam, size_px)
                     self.order += 1
                     # slack so PowerPoint's own metrics don't wrap the text
-                    boxes.append(Box(kind="text", x=cx + skip, y=cy + line_h - ih,
+                    boxes.append(Box(kind="text", x=cx + skip, y=top + content_h - ih,
                                      w=vis * 1.15 + 4.0, h=ih,
                                      paras=[Para(runs=[run])], order=self.order,
                                      note="inline text"))
                 cx += iw
-            cy += line_h
+            cy += content_h + extra
 
         mb = to_px(style.get("margin-bottom"), self.dpi) or 0.0
+        self.trailing = mb
         return cy - y + mb
+
+    def _line_multiple(self, style: dict) -> float:
+        """A paragraph's line-height as a multiple, such as 1.14 for 114%."""
+        value = str(style.get("line-height") or "").strip()
+        if value.endswith("%"):
+            try:
+                ratio = float(value[:-1]) / 100.0
+            except ValueError:
+                ratio = 1.0
+        else:
+            lh = to_px(value, self.dpi)
+            fs = to_px(style.get("font-size", "12pt"), self.dpi)
+            ratio = lh / fs if lh and fs else 1.0
+        return min(max(ratio, 1.0), 3.0)
 
     # -- tree walk ----------------------------------------------------------
 
@@ -889,6 +966,7 @@ class Converter:
         cursor = y + pad_t
 
         segs = self._segments(el, sheet, style, stop_nodes)
+        trailing = 0.0
         text_segs = [s for s in segs if s[0] == "text"]
         only_text = len(segs) == len(text_segs)
 
@@ -906,6 +984,7 @@ class Converter:
                 boxes.append(Box(kind="text", x=content_x, y=cursor,
                                  w=content_w, h=box_h, paras=paras, order=self.order))
                 cursor += est
+                trailing = paras[-1].space_after_pt * self.dpi / 72.0
                 continue
 
             if kind == "img":
@@ -922,11 +1001,13 @@ class Converter:
                                      order=self.order, note=payload.get("alt") or ""))
                 if not has_coords(seg_style):
                     cursor += ih
+                    trailing = 0.0
                 continue
 
             if kind == "line":
                 cursor += self._line_boxes(payload, sheet, seg_style, content_x, cursor,
                                            content_w, h, boxes)
+                trailing = self.trailing
                 continue
 
             # table
@@ -939,6 +1020,8 @@ class Converter:
             boxes.extend(tb)
             if not has_coords(seg_style):
                 cursor += used
+                trailing = 0.0
+        self.trailing = trailing
         return cursor - y
 
 
@@ -1125,6 +1208,8 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                 p.alignment = para.align
             if para.line_spacing:
                 p.line_spacing = para.line_spacing
+            if "\t" in para.text():
+                p._p.get_or_add_pPr().set("defTabSz", str(int(Pt(TAB_STOP_PT))))
             if para.indent_pt:
                 # first-line indent: python-pptx has no API for it
                 p._p.get_or_add_pPr().set("indent", str(int(Pt(min(para.indent_pt, 144)))))
