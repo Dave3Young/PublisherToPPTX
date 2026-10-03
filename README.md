@@ -57,6 +57,7 @@ These settings are at the top of the script:
 | `-Recurse` | | Convert every export folder below `-Path`. Any folder holding an `.htm` file counts. |
 | `-HiRes` | | Replace Publisher's web-quality images with stage 1's 300 dpi PNGs, keeping the HTML layout. |
 | `-NoExtras` | | Leave out the extra slides that carry scratch-area pictures and text. |
+| `-Reflow` | | Let text wrap freely in PowerPoint instead of breaking each line where Publisher does. Easier to edit, but lines can break differently from Publisher. |
 | `-Report` | | Write `<name>_conversion_report.txt` beside each `.pptx`. |
 | `-OutputFolder` | the export folder | Where the `.pptx` files are written. |
 | `-Dpi` | 96 | CSS pixels per inch. Change it only if pages come out the wrong size. |
@@ -69,18 +70,21 @@ Publisher's HTML export loses some layout, so stage 1 also asks Publisher for it
 | File | Holds | Stage 2 uses it to |
 | --- | --- | --- |
 | `<name>_pagesize.txt` | The page width and height in inches. | Size the slides. The export sizes its page to the content, sometimes with a broken height. |
-| `<name>_text.json` | Every paragraph's real text (with its tabs), alignment, indents, spacing, line-spacing rule, font, tab stops, and where Publisher puts it on the page. | Put tabs and tab stops back exactly, and place each paragraph, and each line of inline pictures, where Publisher does. |
+| `<name>_text.json` | Every paragraph's real text (with its tabs), alignment, indents, spacing, line-spacing rule, font, tab stops, where Publisher puts it on the page, and where each of its lines starts. | Put tabs and tab stops back exactly, place each paragraph, and each line of inline pictures, where Publisher does, and break lines where Publisher breaks them. |
 
 Stage 2 matches a paragraph in the HTML to `_text.json` by its words and, for repeated text,
 by its position. Exports made before these files existed still convert, using estimates.
+Stage 1 doesn't rewrite an existing `_text.json`. A `_text.json` written before stage 1
+recorded line starts converts with the text wrapping freely; to get Publisher's line breaks,
+move the old file aside and run stage 1 again.
 
 ## What gets converted
 | Publisher content | In the `.pptx` |
 | --- | --- |
 | Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
-| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, all caps, small caps, letter spacing, line breaks, indents (hanging ones too, from `_text.json`), tabs and blank lines. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup, with the box's outline behind it: a rectangle, rounded rectangle, ellipse or callout, solid or dashed. |
+| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, all caps, small caps, letter spacing, line breaks, indents (hanging ones too, from `_text.json`), tabs and blank lines. With `_text.json`, each line ends where Publisher ends it, with a hyphen where Publisher hyphenates a word, so text wraps as in Publisher even where it flows around a picture. Use `-Reflow` to let PowerPoint wrap the text instead. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup, with the box's outline behind it: a rectangle, rounded rectangle, ellipse or callout, solid or dashed. |
 | Text box overflow | Left out, as Publisher hides it: paragraphs past the bottom of a text box, and inline pictures too wide for it. Each is listed as a warning. |
-| Picture | A picture at the same position and size. With `-HiRes`, stage 1's 300 dpi PNG is used. |
+| Picture | A picture at the same position and size, cropped to the same shape when Publisher crops it to a rounded rectangle or ellipse, and stacked in Publisher's order. With `-HiRes`, stage 1's 300 dpi PNG is used. |
 | Pictures inside groups | Exported one by one in stage 1. |
 | Master page pictures | Exported in stage 1. |
 | Filled box | A filled rectangle. |
@@ -97,9 +101,15 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   before printing. A font not installed on the converting computer is written as Calibri,
   which is what Publisher draws in its place. Abadi becomes Gill Sans MT, and FangSong and
   KaiTi become SimSun; add others to `FONT_SUBSTITUTES` in `pubhtml2pptx.py`.
-- **Text wrapping and hyphenation:** PowerPoint can't wrap text around a picture, and doesn't
-  hyphenate. Where Publisher does either, lines break differently, and the paragraphs that
-  follow in the same text box can sit higher or lower than in Publisher.
+- **Line breaks:** each line of a paragraph ends in a line break where Publisher ends it.
+  Editing the text in Canva or PowerPoint doesn't rewrap those lines, so convert with
+  `-Reflow` if the text will be rewritten. PowerPoint sets some fonts up to about 2% wider
+  than Publisher, so a line that nearly fills its box is set slightly tighter to keep it on
+  one line. A line Publisher indents to clear a picture on its left starts at the box edge.
+- **Text wrapping and hyphenation with `-Reflow`, or without `_text.json`:** PowerPoint
+  can't wrap text around a picture, and doesn't hyphenate. Where Publisher does either,
+  lines break differently, and the paragraphs that follow in the same text box can sit
+  higher or lower than in Publisher.
 - **Image types:** images in other formats (such as Publisher's `.wmz` files) are skipped,
   with a warning.
 - **`-HiRes` matching:** a 300 dpi PNG replaces a web image only when the counts on the page
@@ -110,7 +120,9 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   to write `_text.json` and get exact tabs.
 - **Text position:** with `_text.json`, text lands within about 2pt of Publisher. PowerPoint
   places a line's extra spacing differently from Publisher, and stage 2 corrects for it
-  with one factor for all fonts. Without the file, positions are estimated from the HTML.
+  with one factor for all fonts. PowerPoint rounds spacing given in points to whole points,
+  so line spacing is written as a multiple where it can be, and each paragraph's rounded
+  space after is made up in the next. Without the file, positions are estimated from the HTML.
 - **Shapes and WordArt:** only what Publisher's HTML export writes out comes through. A
   shape or WordArt the export doesn't write out is missing from the slide.
 - **Text boxes exported as pictures:** a text box inside a group, a rotated one, WordArt, or
