@@ -78,12 +78,13 @@ by its position. Exports made before these files existed still convert, using es
 | Publisher content | In the `.pptx` |
 | --- | --- |
 | Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
-| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, line breaks, first-line indents, tabs and blank lines. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup. |
+| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, all caps, small caps, letter spacing, line breaks, indents (hanging ones too, from `_text.json`), tabs and blank lines. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup, with the box's outline behind it: a rectangle, rounded rectangle, ellipse or callout, solid or dashed. |
+| Text box overflow | Left out, as Publisher hides it: paragraphs past the bottom of a text box, and inline pictures too wide for it. Each is listed as a warning. |
 | Picture | A picture at the same position and size. With `-HiRes`, stage 1's 300 dpi PNG is used. |
 | Pictures inside groups | Exported one by one in stage 1. |
 | Master page pictures | Exported in stage 1. |
 | Filled box | A filled rectangle. |
-| Table | A rectangle for each cell's fill, plus a text box for each cell's text. Cell content is centred vertically unless the cell says otherwise, as in Publisher. |
+| Table | A rectangle for each cell's fill and for each cell border, plus a text box for each cell's text. Cell content is centred vertically unless the cell says otherwise, as in Publisher. |
 | Pictures in a line of text | Placed side by side as in Publisher, with the spaces and tabs between them kept. Any words in the line become small text boxes beside the pictures. |
 | Scratch area | Pictures and text left off the page never reach the HTML export, so they go on extra slides at the end. Turn these off with `-NoExtras`. |
 
@@ -93,7 +94,12 @@ folder inside the export folder. A table becomes separate boxes, not a PowerPoin
 ## Limits
 Warnings are counted in the run summary, and each one is listed with `-Report` or `-Verbose`.
 - **Fonts:** Canva replaces any font it doesn't have, so check line breaks on every page
-  before printing.
+  before printing. A font not installed on the converting computer is written as Calibri,
+  which is what Publisher draws in its place. Abadi becomes Gill Sans MT, and FangSong and
+  KaiTi become SimSun; add others to `FONT_SUBSTITUTES` in `pubhtml2pptx.py`.
+- **Text wrapping and hyphenation:** PowerPoint can't wrap text around a picture, and doesn't
+  hyphenate. Where Publisher does either, lines break differently, and the paragraphs that
+  follow in the same text box can sit higher or lower than in Publisher.
 - **Image types:** images in other formats (such as Publisher's `.wmz` files) are skipped,
   with a warning.
 - **`-HiRes` matching:** a 300 dpi PNG replaces a web image only when the counts on the page
@@ -107,8 +113,9 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   with one factor for all fonts. Without the file, positions are estimated from the HTML.
 - **Shapes and WordArt:** only what Publisher's HTML export writes out comes through. A
   shape or WordArt the export doesn't write out is missing from the slide.
-- **Text boxes exported as pictures:** a text box inside a group, a rotated one, or WordArt
-  stays a picture. Without `_text.json`, a rebuilt text box that Publisher aligns to the
+- **Text boxes exported as pictures:** a text box inside a group, a rotated one, WordArt, or
+  one whose outline PowerPoint has no preset for (a star or cloud, for instance) stays a
+  picture. Without `_text.json`, a rebuilt text box that Publisher aligns to the
   bottom or middle starts at the top instead.
 
 ## Samples

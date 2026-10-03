@@ -4,3 +4,6 @@ samples/**/*_conversion_report.txt
 samples/**/_pptx_converted/
 __pycache__/
 *.pyc
+
+# Proprietary sample publications: never commit
+proprietary_samples/

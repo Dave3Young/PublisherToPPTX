@@ -57,6 +57,7 @@ import os
 import re
 import sys
 import glob as globmod
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import unquote
@@ -75,6 +76,7 @@ try:
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
     from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.dml import MSO_LINE_DASH_STYLE
     from pptx.oxml.ns import qn
 except ImportError:
     sys.exit("Missing dependency. Run:  pip install python-pptx")
@@ -87,6 +89,26 @@ except ImportError:
 
 EMU_PER_INCH = 914400
 PPTX_MAX_IN = 56.0
+
+# Outline shapes drawn behind rebuilt text boxes
+SHAPE_GEOMS = {
+    "rect": MSO_SHAPE.RECTANGLE,
+    "roundRect": MSO_SHAPE.ROUNDED_RECTANGLE,
+    "ellipse": MSO_SHAPE.OVAL,
+    "wedgeRoundRectCallout": MSO_SHAPE.ROUNDED_RECTANGULAR_CALLOUT,
+    "wedgeRectCallout": MSO_SHAPE.RECTANGULAR_CALLOUT,
+    "wedgeEllipseCallout": MSO_SHAPE.OVAL_CALLOUT,
+}
+# VML dashstyle -> PowerPoint dash
+LINE_DASHES = {
+    "dot": MSO_LINE_DASH_STYLE.ROUND_DOT, "1 1": MSO_LINE_DASH_STYLE.SQUARE_DOT,
+    "shortdot": MSO_LINE_DASH_STYLE.SQUARE_DOT, "dash": MSO_LINE_DASH_STYLE.DASH,
+    "shortdash": MSO_LINE_DASH_STYLE.DASH, "dashdot": MSO_LINE_DASH_STYLE.DASH_DOT,
+    "shortdashdot": MSO_LINE_DASH_STYLE.DASH_DOT, "longdash": MSO_LINE_DASH_STYLE.LONG_DASH,
+    "longdashdot": MSO_LINE_DASH_STYLE.LONG_DASH_DOT,
+    "longdashdotdot": MSO_LINE_DASH_STYLE.DASH_DOT_DOT,
+    "shortdashdotdot": MSO_LINE_DASH_STYLE.DASH_DOT_DOT,
+}
 
 # ----------------------------------------------------------------------------
 # Small CSS engine
@@ -337,6 +359,8 @@ class Run:
     italic: bool = False
     underline: bool = False
     color: Optional[RGBColor] = None
+    caps: Optional[str] = None        # "all" | "small"
+    spacing_pt: Optional[float] = None    # letter spacing
 
 
 @dataclass
@@ -345,7 +369,8 @@ class Para:
     align: Optional[object] = None
     space_after_pt: float = 0.0
     line_spacing: Optional[float] = None
-    indent_pt: float = 0.0
+    indent_pt: float = 0.0            # first line, from the left indent; may be negative
+    left_indent_pt: float = 0.0
     tab_stops: list = field(default_factory=list)    # [(pos_pt, PbTabAlignmentType)]
     pub: Optional[dict] = None        # stage 1's record for this paragraph
     pub_placed: bool = False          # pub was found at this paragraph's place
@@ -372,17 +397,85 @@ class Box:
     note: str = ""
     anchor: str = "top"            # text: "top" | "middle" | "bottom"
     fixed: bool = False            # at Publisher's own position: never shifted
+    geom: str = "rect"             # rect: a SHAPE_GEOMS key
+    adj: tuple = ()                # rect: the preset's adjustment values
+    dash: Optional[str] = None     # rect: a LINE_DASHES key
 
 
 # Font files for measuring inline text. ImageFont.truetype finds these in
-# C:\Windows\Fonts by file name.
+# C:\Windows\Fonts by file name. Fonts not listed are looked up in the
+# registry's list of installed fonts.
 FONT_FILES = {
     "arial": "arial.ttf", "verdana": "verdana.ttf", "calibri": "calibri.ttf",
     "cambria": "cambria.ttc", "times new roman": "times.ttf", "georgia": "georgia.ttf",
     "tahoma": "tahoma.ttf", "trebuchet ms": "trebuc.ttf", "segoe ui": "segoeui.ttf",
     "courier new": "cour.ttf", "garamond": "gara.ttf", "century gothic": "gothic.ttf",
 }
+# Fonts that are not free to install, replaced by an installed font close in
+# style and width when the real one is missing. Keys are lower-case.
+FONT_SUBSTITUTES = {
+    "abadi": "Gill Sans MT", "abadi extra light": "Gill Sans MT",
+    "abadi mt": "Gill Sans MT", "abadi mt condensed": "Gill Sans MT Condensed",
+    "abadi mt condensed light": "Gill Sans MT Condensed",
+    "abadi mt condensed extra bold": "Gill Sans MT Condensed",
+    # Chinese fonts: Publisher draws these with SimSun's Latin letters
+    "fangsong": "SimSun", "kaiti": "SimSun",
+}
+MISSING_FONT = "Calibri"
 _font_cache: dict = {}
+_installed_fonts: Optional[dict] = None
+
+
+def installed_fonts() -> dict:
+    """Lower-case face name -> font file, from the Windows font registry."""
+    global _installed_fonts
+    if _installed_fonts is None:
+        _installed_fonts = {}
+        try:
+            import winreg
+        except ImportError:
+            return _installed_fonts
+        key_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, key_path) as key:
+                    i = 0
+                    while True:
+                        try:
+                            name, value, _ = winreg.EnumValue(key, i)
+                        except OSError:
+                            break
+                        i += 1
+                        name = re.sub(r"\s*\((TrueType|OpenType)\)\s*$", "", name, flags=re.I)
+                        # a collection lists its faces as "A & B"
+                        for face in name.split(" & "):
+                            _installed_fonts.setdefault(face.strip().lower(), str(value))
+            except OSError:
+                pass
+    return _installed_fonts
+
+
+_family_installed: dict = {}
+
+
+def font_installed(family: str) -> bool:
+    """True if a face of this family is installed, or if the font list is
+    unavailable (not Windows)."""
+    key = family.lower()
+    if key not in _family_installed:
+        inst = installed_fonts()
+        _family_installed[key] = (not inst or key in inst or key in FONT_FILES
+                                  or any(k.startswith(key + " ") for k in inst))
+    return _family_installed[key]
+
+
+def font_name(family: Optional[str]) -> Optional[str]:
+    """The family to use. A missing font becomes its substitute, else Calibri,
+    which is what Publisher draws in place of any font it does not have."""
+    if not family or font_installed(family):
+        return family
+    sub = FONT_SUBSTITUTES.get(family.lower())
+    return sub if sub and font_installed(sub) else MISSING_FONT
 
 # Collapses HTML whitespace but keeps non-breaking spaces, which Publisher
 # uses to space out text and inline pictures.
@@ -417,6 +510,45 @@ def pub_key(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
+# A bullet or list number the export wrote as text (Symbol, Wingdings or
+# Unicode glyphs, "1." or "a)"); Publisher's own text leaves them out
+_BULLET_RE = re.compile("^[ \xa0]*(?:[•·▪■●○◦§Ø"
+                        "ü–‐-]"
+                        r"|\(?(?:\d{1,3}|[a-zA-Z]|[ivxIVX]{1,5})[.)])[ \xa0\t]+")
+
+
+def _keep_key_chars(runs: list, n: int) -> None:
+    """Cuts a paragraph's runs after its first n non-whitespace characters."""
+    for i, run in enumerate(runs):
+        if n <= 0:
+            del runs[i:]
+            return
+        seen = 0
+        for j, ch in enumerate(run.text):
+            if not ch.isspace():
+                seen += 1
+                if seen == n:
+                    run.text = run.text[:j + 1]
+                    del runs[i + 1:]
+                    return
+        n -= seen
+
+
+def _drop_prefix(runs: list, n: int) -> list:
+    """Removes the first n characters of a paragraph's runs and returns them
+    as runs of their own, styled as they were."""
+    removed = []
+    for run in runs:
+        if n <= 0:
+            break
+        cut = min(n, len(run.text))
+        removed.append(dataclasses.replace(run, text=run.text[:cut]))
+        run.text = run.text[cut:]
+        n -= cut
+    runs[:] = [r for r in runs if r.text] or runs[:1]
+    return removed
+
+
 def load_pub_text(export_dir: str, base: str) -> dict:
     """Stage 1's <base>_text.json: every paragraph, listed by pub_key. A line
     break splits a paragraph in the HTML, so each line is indexed too."""
@@ -429,13 +561,22 @@ def load_pub_text(export_dir: str, base: str) -> dict:
     index: dict = {}
 
     def add(par):
-        lines = str(par.get("text", "")).split("\v")
+        lines = re.split("[\v\n]", str(par.get("text", "")))
+        tops = sorted(set(par.get("lineTops") or []))
+        # each line on a row of its own: its row's top places it
+        rows = len(lines) > 1 and par.get("top") is not None and len(tops) == len(lines)
         for i, line in enumerate(lines):
             key = pub_key(line)
             if key:
                 rec = {**par, "text": line,
                        "firstIndent": par.get("firstIndent", 0) if i == 0 else 0}
-                if len(lines) > 1:
+                if rows:
+                    end = tops[i + 1] if i + 1 < len(tops) else (
+                        par["top"] + (par.get("height") or 0.0))
+                    rec.update(top=tops[i], height=end - tops[i], lineTops=[tops[i]],
+                               spaceBefore=par.get("spaceBefore", 0) if i == 0 else 0,
+                               spaceAfter=par.get("spaceAfter", 0) if i + 1 == len(lines) else 0)
+                elif len(lines) > 1:
                     rec["top"] = None          # a line's own position isn't recorded
                 index.setdefault(key, []).append(rec)
 
@@ -496,6 +637,26 @@ def apply_pub_whitespace(runs: list, pub_text: str) -> bool:
     return True
 
 
+_SPACE_RUN_RE = re.compile(" {8,}")
+
+
+def _space_breaks(para, rec: dict) -> None:
+    """Some authors end lines with a run of spaces long enough to wrap.
+    Publisher drops the spaces at the wrap; PowerPoint carries them onto the
+    next line. When the runs split the text into exactly Publisher's lines,
+    they become line breaks."""
+    tops = set(rec.get("lineTops") or [])
+    pieces = _SPACE_RUN_RE.split(str(rec.get("text", "")).rstrip())
+    if len(tops) < 2 or len(pieces) != len(tops):
+        return
+    for run in para.runs:
+        run.text = _SPACE_RUN_RE.sub("\v", run.text)
+    for run in reversed(para.runs):
+        run.text = run.text.rstrip(" \v")
+        if run.text:
+            break
+
+
 def next_tab_px(x: float, stops_px: list, default_px: float) -> float:
     """Where a tab at x lands: the next custom stop, else the next default one."""
     for stop in stops_px:
@@ -532,10 +693,10 @@ def text_width_px(text: str, family: Optional[str], size_px: float) -> float:
     if not text:
         return 0.0
     if HAVE_PIL:
-        key = ((family or "").lower(), round(size_px * 4))
+        key = ((font_name(family) or "").lower(), round(size_px * 4))
         if key not in _font_cache:
             font = None
-            fname = FONT_FILES.get(key[0])
+            fname = FONT_FILES.get(key[0]) or installed_fonts().get(key[0])
             if fname:
                 try:
                     from PIL import ImageFont
@@ -578,7 +739,7 @@ class Converter:
             return None
         fam = style.get("font-family")
         if fam:
-            fam = fam.split(",")[0].strip().strip("'\"")
+            fam = font_name(fam.split(",")[0].strip().strip("'\""))
         weight = str(style.get("font-weight", "")).lower()
         bold = weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600)
         deco = str(style.get("text-decoration", "")).lower()
@@ -590,6 +751,11 @@ class Converter:
             italic=str(style.get("font-style", "")).lower() in ("italic", "oblique"),
             underline="underline" in deco,
             color=parse_color(style.get("color")),
+            caps=("all" if str(style.get("text-transform", "")).lower() == "uppercase"
+                  else "small" if "small-caps" in str(style.get("font-variant", "")).lower()
+                  else None),
+            spacing_pt=(lambda v: v * 72.0 / self.dpi if v else None)(
+                to_px(style.get("letter-spacing"), self.dpi)),
         )
 
     def collect_paras(self, nodes, sheet: StyleSheet, inherited: dict,
@@ -650,6 +816,8 @@ class Converter:
                     current.space_after_pt = (mb or 0) * 72.0 / self.dpi
                     ti = to_px(child_style.get("text-indent"), self.dpi)
                     current.indent_pt = (ti or 0) * 72.0 / self.dpi
+                    ml = to_px(child_style.get("margin-left"), self.dpi)
+                    current.left_indent_pt = max(ml or 0.0, 0.0) * 72.0 / self.dpi
                 flush()
             else:
                 for c in node.children:
@@ -663,12 +831,35 @@ class Converter:
             if p.align is None:
                 p.align = base_align
             rec, placed = self.pub_find(pub_key(p.text()), region)
+            # the export writes a bullet as text; Publisher's text has none
+            bullet = _BULLET_RE.match(p.text()) if rec is None else None
+            bullet_runs = []
+            if bullet:
+                rec, placed = self.pub_find(pub_key(p.text()[bullet.end():]), region)
+                if rec:
+                    bullet_runs = _drop_prefix(p.runs, bullet.end())
+            if rec is None and region is not None:
+                # a paragraph running into the overflow: Publisher's text is
+                # only its visible start, so keep just that
+                rec, placed = self.pub_find_start(pub_key(p.text()), region)
+                if rec:
+                    _keep_key_chars(p.runs, len(pub_key(rec["text"])))
             if rec and apply_pub_whitespace(p.runs, rec["text"]):
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
                 p.pub, p.pub_placed = rec, placed
+                _space_breaks(p, rec)
+                # Publisher's indents: the HTML leaves out hanging ones
+                p.left_indent_pt = max(float(rec.get("leftIndent") or 0.0), 0.0)
+                p.indent_pt = max(float(rec.get("firstIndent") or 0.0), -p.left_indent_pt)
             elif p.align in (None, PP_ALIGN.LEFT):
                 self._restore_tabs(p)
+            if bullet_runs:
+                if p.indent_pt < 0:
+                    # a hanging bullet: a tab takes the text to the indent
+                    bullet_runs[-1].text = bullet_runs[-1].text.rstrip(" \xa0\t") + "\t"
+                    bullet_runs = [r for r in bullet_runs if r.text]
+                p.runs[:0] = bullet_runs
         text_paras = [p for p in paras if p.text().strip()]
         if not text_paras or all(p.pub_placed for p in text_paras):
             # _pub_place folds the empty paragraphs into the space after
@@ -700,12 +891,51 @@ class Converter:
                     return rec, True
         return recs[0], False
 
-    def _pub_place(self, paras: list):
+    def pub_find_start(self, key: str, region):
+        """An unclaimed record inside region whose text is the start of key,
+        for a paragraph cut short by its text box's overflow. Claims it."""
+        if len(key) < 20:
+            return None, False
+        x0, y0, x1, y1 = region
+        tol = 3.0
+        for k, recs in self.pub_text.items():
+            if len(k) < 20 or len(k) >= len(key) or not key.startswith(k):
+                continue
+            for rec in recs:
+                if rec.get("top") is None or id(rec) in self.pub_claimed:
+                    continue
+                rx = rec["left"] * self.dpi / 72.0
+                ry = rec["top"] * self.dpi / 72.0
+                if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
+                    self.pub_claimed.add(id(rec))
+                    return rec, True
+        return None, False
+
+    def _pub_place(self, paras: list, bottom: Optional[float] = None):
         """Puts paragraphs where Publisher puts them: sets each one's exact line
         spacing and space after so it starts at Publisher's top. Returns (top,
-        height) in px, or None unless every paragraph was found in place."""
-        if not paras or not all(p.pub_placed for p in paras):
+        height) in px, or None unless every paragraph was found in place.
+
+        Empty paragraphs are left out (their space falls into the space after),
+        and so is a text box's overflow, which Publisher hides: paragraphs at
+        the end that stage 1 did not see in this box, below text that reaches
+        the frame's bottom (px). Both are removed from paras."""
+        text = [p for p in paras if p.text().strip()]
+        if bottom is not None:
+            n = len(text)
+            while n and not text[n - 1].pub_placed:
+                n -= 1
+            if 0 < n < len(text) and text[n - 1].pub_placed:
+                last = text[n - 1].pub
+                lines = max(len(last.get("lineTops") or []), 1)
+                end = (last["top"] + (last.get("height") or 0.0)) * self.dpi / 72.0
+                if end >= bottom - 2.5 * (last.get("height") or 0.0) / lines * self.dpi / 72.0:
+                    self.warn(f"dropped {len(text) - n} paragraph(s) in a text box's "
+                              f"overflow, which Publisher hides: {text[n].text()[:40]!r}")
+                    text = text[:n]
+        if not text or not all(p.pub_placed for p in text):
             return None
+        paras[:] = text
         settings = []
         for i, p in enumerate(paras):
             rec = p.pub
@@ -855,6 +1085,7 @@ class Converter:
                     self.order += 1
                     boxes.append(Box(kind="rect", x=cx, y=cy, w=cw, h=row_h[ri],
                                      fill=fill, order=self.order, note="table cell fill"))
+                boxes.extend(self._cell_borders(cs, cx, cy, cw, row_h[ri]))
                 # HTML centres cell content vertically unless told otherwise,
                 # and Publisher's export relies on that
                 valign = str(cs.get("vertical-align") or cell.get("valign")
@@ -875,11 +1106,19 @@ class Converter:
                     for b in placed:
                         if not b.fixed:
                             b.y += dy
-                    boxes.extend(placed)
+                    # Publisher hides a text box's overflow: whatever starts
+                    # below its bottom, and inline pictures too wide to fit
+                    bottom = cy + row_h[ri]
+                    kept = [b for b in placed
+                            if b.y < bottom - 1.0 and not (b.kind == "image" and b.w > cw + 2.0)]
+                    if len(kept) < len(placed):
+                        self.warn(f"dropped {len(placed) - len(kept)} shape(s) in a text box's "
+                                  f"overflow, which Publisher hides")
+                    boxes.extend(kept)
                 elif paras:
                     paras = self.collect_paras(cell, sheet, cs, stop_nodes,
                                                region=(cx, cy, cx + cw, cy + row_h[ri]))
-                    where = self._pub_place(paras)
+                    where = self._pub_place(paras, bottom=cy + row_h[ri])
                     # the cell's own padding, else the table's cellpadding,
                     # plus that of the text box's <div class=shape> inside it
                     pl, pt_, pr, pb = (
@@ -903,6 +1142,40 @@ class Converter:
                                          anchor=valign))
             cy += row_h[ri]
         return boxes, cy - y
+
+    def _cell_borders(self, style: dict, x, y, w, h) -> list:
+        """A table cell's borders, each a thin filled rectangle centred on
+        the cell's edge, as Publisher's collapsed borders are."""
+        out = []
+        for side in ("top", "bottom", "left", "right"):
+            val = style.get(f"border-{side}") or style.get("border")
+            if not val:
+                continue
+            toks = str(val).lower().split()
+            if any(t in ("none", "hidden") for t in toks):
+                continue
+            color, width = None, None
+            for t in toks:
+                c = parse_color(t)
+                if c is not None and color is None:
+                    color = c
+                bw = to_px(t, self.dpi)
+                if bw is not None and width is None:
+                    width = bw
+            width = 1.0 if width is None else width
+            if width <= 0:
+                continue
+            color = color if color is not None else RGBColor(0, 0, 0)
+            if side in ("top", "bottom"):
+                ey = y if side == "top" else y + h
+                rect = (x - width / 2, ey - width / 2, w + width, width)
+            else:
+                ex = x if side == "left" else x + w
+                rect = (ex - width / 2, y - width / 2, width, h + width)
+            self.order += 1
+            out.append(Box(kind="rect", x=rect[0], y=rect[1], w=rect[2], h=rect[3],
+                           fill=color, order=self.order, note="table cell border"))
+        return out
 
     def _wrapper_padding(self, cell: Tag, sheet: StyleSheet, style: dict, cw: float) -> list:
         """Padding (left, top, right, bottom px) of the divs that wrap all of a
@@ -1224,8 +1497,12 @@ class Converter:
             border_w = 1.0
         if (fill is not None or border is not None) and w and h:
             self.order += 1
+            # a rebuilt VML text box says which outline shape it had
+            adj = tuple(float(v) for v in str(style.get("x-adj") or "").split())
             boxes.append(Box(kind="rect", x=x, y=y, w=w, h=h, fill=fill,
-                             line=border, line_w_px=border_w, order=self.order))
+                             line=border, line_w_px=border_w, order=self.order,
+                             geom=style.get("x-geom") or "rect", adj=adj,
+                             dash=style.get("x-dash")))
 
         if el.name.lower() == "img":
             src = unquote(el.get("src") or "")
@@ -1259,7 +1536,7 @@ class Converter:
                                            region=(x, y, x + w, y + h))
                 if not paras:
                     continue
-                where = self._pub_place(paras)
+                where = self._pub_place(paras, bottom=y + h if cb_h else None)
                 if where:
                     top, used = where
                     self.order += 1
@@ -1324,56 +1601,154 @@ class Converter:
 # ----------------------------------------------------------------------------
 
 def _vml_pt(value, default=0.0) -> float:
-    """A VML length in pt: '34.84pt', '0' or '2.85pt'."""
-    m = re.match(r"\s*(-?[\d.]+)\s*(pt|in|px)?", str(value or ""))
+    """A VML length in pt: '34.84pt', '0' or '8.68mm'."""
+    m = re.match(r"\s*(-?[\d.]+)\s*(pt|in|px|mm|cm)?", str(value or ""))
     if not m:
         return default
     v = float(m.group(1))
-    return {"in": v * 72.0, "px": v * 0.75}.get(m.group(2), v)
+    return {"in": v * 72.0, "px": v * 0.75, "mm": v * 72.0 / 25.4,
+            "cm": v * 72.0 / 2.54}.get(m.group(2), v)
+
+
+def _vml_fraction(value, default: float) -> float:
+    """A VML fraction: '0.25', '25%' or '16384f' (65536ths)."""
+    v = str(value or "").strip()
+    try:
+        if v.endswith("f"):
+            return float(v[:-1]) / 65536.0
+        if v.endswith("%"):
+            return float(v[:-1]) / 100.0
+        return float(v) if v else default
+    except ValueError:
+        return default
+
+
+# VML shape type (#_x0000_tNN) -> outline: rectangles, rounded ones, ellipses
+# and their callouts. Other shapes keep Publisher's picture.
+_VML_TYPES = {"202": "rect", "1": "rect", "2": "roundRect", "3": "ellipse",
+              "176": "roundRect", "61": "wedgeRectCallout",
+              "62": "wedgeRoundRectCallout", "63": "wedgeEllipseCallout"}
+
+
+def _vml_outline(shape: Tag) -> Optional[tuple]:
+    """(geom, adjustments) for a VML shape's outline, or None if PowerPoint
+    has no matching preset."""
+    if shape.name in ("v:rect", "v:oval"):
+        return ("rect" if shape.name == "v:rect" else "ellipse"), ()
+    if shape.name == "v:roundrect":
+        # arcsize: the corner radius as a share of the shorter side
+        return "roundRect", (_vml_fraction(shape.get("arcsize"), 0.2),)
+    m = re.match(r"#_x0000_t(\d+)$", str(shape.get("type") or ""))
+    geom = _VML_TYPES.get(m.group(1)) if m else None
+    if geom is None:
+        return None
+    adj = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", str(shape.get("adj") or ""))]
+    if m.group(1) == "2":
+        return geom, ((adj[0] if adj else 3600.0) / 21600.0,)
+    if m.group(1) == "176":
+        return geom, (1 / 6,)
+    if geom.endswith("Callout"):
+        tx, ty = (adj + [1350.0, 25920.0][len(adj):])[:2]
+        if 0 <= tx <= 21600 and 0 <= ty <= 21600:
+            # the pointer ends inside the shape, so none shows
+            return {"wedgeRectCallout": "rect", "wedgeEllipseCallout": "ellipse"}.get(
+                geom, "roundRect"), ((1 / 6,) if geom == "wedgeRoundRectCallout" else ())
+        return geom, (tx / 21600.0 - 0.5, ty / 21600.0 - 0.5) + (
+            (1 / 6,) if geom == "wedgeRoundRectCallout" else ())
+    return geom, ()
+
+
+def _vml_text_area(shape: Tag, shapetype: Optional[Tag], geom: str, adj: tuple,
+                   width: float, height: float) -> tuple:
+    """How far (left, top, right, bottom pt) a shape's text area sits inside
+    its outline: the shape type's textboxrect, in its coordsize. Formula
+    rectangles of rounded shapes are worked out from the corner radius, and
+    the ellipse's from its preset."""
+    path = (shape.find("v:path") or (shapetype.find("v:path") if shapetype else None))
+    rect = str(path.get("textboxrect") or "") if path else ""
+    nums = rect.split(";")[0].split(",")
+    if len(nums) == 4 and all(re.fullmatch(r"-?\d+", n.strip()) for n in nums):
+        size = str((shapetype or shape).get("coordsize") or "21600,21600").split(",")
+        try:
+            cw, ch = float(size[0]), float(size[-1])
+        except ValueError:
+            cw = ch = 21600.0
+        l, t, r, b = (float(n) for n in nums)
+        return (l / cw * width, t / ch * height, (cw - r) / cw * width, (ch - b) / ch * height)
+    if geom == "roundRect" and adj:
+        k = (1 - 0.5 ** 0.5) * adj[0] * min(width, height)   # where the corner arc is at 45 degrees
+        return (k, k, k, k)
+    if geom.startswith(("ellipse", "wedgeEllipse")):
+        return (0.1464 * width, 0.1464 * height, 0.1464 * width, 0.1464 * height)
+    return (0.0, 0.0, 0.0, 0.0)
 
 
 def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
     """Publisher exports some text boxes (filled ones, for instance) as a
     picture of the text, keeping the real text only in the VML inside an
     <!--[if gte vml 1]> comment. Swaps each such picture for a positioned div
-    holding that text, so it stays editable. Shapes inside a VML group, rotated
-    or WordArt shapes keep their picture. Returns how many were swapped."""
-    found = {}
+    holding that text, so it stays editable, with the shape's outline behind
+    it. Shapes inside a VML group, rotated or WordArt shapes, inline ones and
+    outlines PowerPoint has no preset for keep their picture. Returns how many
+    were swapped."""
+    found, text_rects = {}, {}
     for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
         vml = BeautifulSoup(str(c), "html.parser")
-        for shape in vml.find_all(["v:shape", "v:rect", "v:roundrect"]):
+        for shape in vml.find_all(["v:shape", "v:rect", "v:roundrect", "v:oval"]):
             box = shape.find("v:textbox", recursive=False)
             if (box is None or not box.get_text(strip=True) or shape.find_parent("v:group")
                     or shape.find("v:textpath")):
                 continue
             decl = parse_decls(shape.get("style", ""))
-            if decl.get("rotation") or "layout-flow" in str(box.get("style", "")):
+            if (decl.get("rotation") or "layout-flow" in str(box.get("style", ""))
+                    or str(decl.get("position", "")).lower() != "absolute"):
                 continue
-            found[shape.get("id")] = (shape, decl, box)
+            outline = _vml_outline(shape)
+            if outline is None:
+                continue
+            found[shape.get("id")] = (shape, decl, box, outline)
+        for st in vml.find_all("v:shapetype"):
+            text_rects[st.get("id")] = st
     count = 0
     for img in soup.find_all("img"):
         hit = found.get(img.get("v:shapes"))
         if not hit:
             continue
-        shape, decl, box = hit
+        shape, decl, box, (geom, adj) = hit
         inset = [_vml_pt(v, 2.88) for v in (box.get("inset") or "").split(",")]
         inset += [2.88] * (4 - len(inset))          # left, top, right, bottom
         inner = box.find("div")
         pad = parse_decls(inner.get("style", "")) if inner else {}
+        width, height = _vml_pt(decl.get("width")), _vml_pt(decl.get("height"))
+        # the shape's own text area inside its outline
+        area = _vml_text_area(shape, text_rects.get(str(shape.get("type") or "").lstrip("#")),
+                              geom, adj, width, height)
         styles = [
             "position:absolute",
             f"left:{_vml_pt(decl.get('left')):.2f}pt",
             f"top:{_vml_pt(decl.get('top')):.2f}pt",
-            f"width:{_vml_pt(decl.get('width')):.2f}pt",
-            f"height:{_vml_pt(decl.get('height')):.2f}pt",
-            f"padding-left:{inset[0] + _vml_pt(pad.get('padding-left')):.2f}pt",
-            f"padding-top:{inset[1] + _vml_pt(pad.get('padding-top')):.2f}pt",
-            f"padding-right:{inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
-            f"padding-bottom:{inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
+            f"width:{width:.2f}pt",
+            f"height:{height:.2f}pt",
+            f"padding-left:{area[0] + inset[0] + _vml_pt(pad.get('padding-left')):.2f}pt",
+            f"padding-top:{area[1] + inset[1] + _vml_pt(pad.get('padding-top')):.2f}pt",
+            f"padding-right:{area[2] + inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
+            f"padding-bottom:{area[3] + inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
         ]
         fill = str(shape.get("fillcolor") or "").split()
         if fill and str(shape.get("filled", "t")).lower() not in ("f", "false"):
             styles.append(f"background-color:{fill[0]}")
+        stroke = shape.find("v:stroke")
+        if (str(shape.get("stroked", "t")).lower() not in ("f", "false")
+                and str((stroke or {}).get("on", "t")).lower() not in ("f", "false")):
+            color = (str(shape.get("strokecolor") or "black").split() or ["black"])[0]
+            styles.append(f"border:{_vml_pt(shape.get('strokeweight'), 0.75):.2f}pt solid {color}")
+            dash = str((stroke or {}).get("dashstyle") or "").lower()
+            if dash and dash != "solid":
+                styles.append(f"x-dash:{dash}")
+        if geom != "rect":
+            styles.append(f"x-geom:{geom}")
+        if adj:
+            styles.append("x-adj:" + " ".join(f"{v:.5f}" for v in adj))
         div = soup.new_tag("div", style=";".join(styles))
         for child in list((inner or box).children):
             div.append(child.extract())
@@ -1544,7 +1919,10 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
             continue
 
         if b.kind == "rect":
-            shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
+            shp = slide.shapes.add_shape(SHAPE_GEOMS.get(b.geom, MSO_SHAPE.RECTANGLE),
+                                         left, top, width, height)
+            for i, v in enumerate(b.adj[:len(shp.adjustments)]):
+                shp.adjustments[i] = v
             if b.fill is not None:
                 shp.fill.solid()
                 shp.fill.fore_color.rgb = b.fill
@@ -1553,6 +1931,8 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
             if b.line is not None:
                 shp.line.color.rgb = b.line
                 shp.line.width = Pt(max(b.line_w_px * 72.0 / dpi, 0.5))
+                if b.dash in LINE_DASHES:
+                    shp.line.dash_style = LINE_DASHES[b.dash]
             else:
                 shp.line.fill.background()
             shp.shadow.inherit = False
@@ -1583,23 +1963,38 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                             "pos": str(int(Pt(pos_pt))), "algn": TAB_ALIGN.get(algn, "l")}))
                     # schema order: after spacing, which is already set
                     ppr.append(tab_lst)
+            if para.left_indent_pt:
+                p._p.get_or_add_pPr().set("marL", str(int(Pt(min(para.left_indent_pt, 288)))))
             if para.indent_pt:
-                # first-line indent: python-pptx has no API for it
-                p._p.get_or_add_pPr().set("indent", str(int(Pt(min(para.indent_pt, 144)))))
+                # first-line indent, negative for a hanging one: python-pptx
+                # has no API for either
+                p._p.get_or_add_pPr().set("indent", str(int(Pt(
+                    max(min(para.indent_pt, 144), -para.left_indent_pt)))))
             if para.space_after_pt:
                 p.space_after = Pt(min(para.space_after_pt, 48))
             for run in para.runs:
-                r = p.add_run()
-                r.text = run.text
-                f = r.font
-                if run.font:
-                    f.name = run.font
-                f.size = Pt(max(min(run.size_pt or 12.0, 400.0), 1.0))
-                f.bold = run.bold
-                f.italic = run.italic
-                f.underline = run.underline
-                if run.color is not None:
-                    f.color.rgb = run.color
+                # "\v" is a line break inside the paragraph
+                for k, piece in enumerate(run.text.split("\v")):
+                    if k:
+                        p.add_line_break()
+                    if not piece:
+                        continue
+                    r = p.add_run()
+                    r.text = piece
+                    f = r.font
+                    if run.font:
+                        f.name = run.font
+                    f.size = Pt(max(min(run.size_pt or 12.0, 400.0), 1.0))
+                    f.bold = run.bold
+                    f.italic = run.italic
+                    f.underline = run.underline
+                    if run.color is not None:
+                        f.color.rgb = run.color
+                    rpr = r._r.get_or_add_rPr()
+                    if run.caps:
+                        rpr.set("cap", run.caps)
+                    if run.spacing_pt:
+                        rpr.set("spc", str(int(round(max(min(run.spacing_pt, 100.0), -100.0) * 100))))
         if verbose:
             print(f"    text  {int(b.x):>5},{int(b.y):>5}  {int(w):>4}x{int(h):<4}  "
                   f"{b.paras[0].text()[:40]!r}" if b.paras else "")
