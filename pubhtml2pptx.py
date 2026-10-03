@@ -40,7 +40,8 @@ Options
     --dpi N             CSS pixels per inch, default 96
     --hires             swap web images for the matching 300dpi COM PNG
     --no-extras         do not append slides for scratch-area PNGs/text
-    --page-size WxH     fallback page size in inches, default 8.5x11
+    --page-size WxH     fallback page size in inches when stage 1 recorded none,
+                        default 8.5x11
     --report            write <basename>_conversion_report.txt beside the pptx
     -v, --verbose       per-shape logging
 
@@ -788,6 +789,17 @@ def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float):
     return top
 
 
+def read_page_size(export_dir: str, base: str) -> Optional[tuple]:
+    """The real page size in inches, recorded by stage 1 as <base>_pagesize.txt."""
+    path = os.path.join(export_dir, base + "_pagesize.txt")
+    try:
+        with open(path, encoding="ascii") as fh:
+            w, h = (float(v) for v in fh.read().split()[:2])
+    except (OSError, ValueError):
+        return None
+    return (w, h) if w > 0 and h > 0 else None
+
+
 def bounding_page(boxes: list, dpi: float, fallback_in):
     if not boxes:
         return fallback_in[0] * dpi, fallback_in[1] * dpi
@@ -1047,6 +1059,9 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         raise FileNotFoundError(f"no .htm found in {export_dir}")
 
     fallback = tuple(float(v) for v in args.page_size.lower().split("x"))
+    # Publisher sizes its page wrapper to the content, not the page, and
+    # sometimes writes a malformed height, so prefer stage 1's real size.
+    real_page = read_page_size(export_dir, base)
     dpi = float(args.dpi)
     resolver = ImageResolver(export_dir, export_dir, warn)
     conv = Converter(args, warn)
@@ -1082,14 +1097,21 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
                 conv.order = 0
                 boxes = []
                 conv.walk(el, sheet, {**body_style, **st}, (0.0, 0.0), w, h, boxes)
+                if real_page:
+                    w, h = real_page[0] * dpi, real_page[1] * dpi
+                else:
+                    # the wrapper can be smaller than its content
+                    w, h = bounding_page(boxes, dpi, (w / dpi, h / dpi))
                 slide_pages.append((w, h, boxes))
         else:
             conv.order = 0
             boxes = []
-            pw = fallback[0] * dpi
-            ph = fallback[1] * dpi
+            page_in = real_page or fallback
+            pw = page_in[0] * dpi
+            ph = page_in[1] * dpi
             conv.walk(body, sheet, body_style, (0.0, 0.0), pw, ph, boxes)
-            pw, ph = bounding_page(boxes, dpi, fallback)
+            if not real_page:
+                pw, ph = bounding_page(boxes, dpi, fallback)
             slide_pages.append((pw, ph, boxes))
 
     if not slide_pages:

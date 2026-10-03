@@ -66,7 +66,7 @@ These settings are at the top of the script:
 ## What gets converted
 | Publisher content | In the `.pptx` |
 | --- | --- |
-| Page | One slide, at the page's size. When the pages differ in size, the deck uses the largest. |
+| Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
 | Text box | An editable text box, keeping font, size, colour, bold, italic, underline and line breaks. |
 | Picture | A picture at the same position and size. With `-HiRes`, stage 1's 300 dpi PNG is used. |
 | Pictures inside groups | Exported one by one in stage 1. |
@@ -90,7 +90,7 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   shape or WordArt the export doesn't write out is missing from the slide.
 
 ## Samples
-`samples\` holds six test publications, one folder each. Every folder holds the source
+`samples\` holds nine test publications, one folder each. Every folder holds the source
 `.pub` and, where stage 1 has been run, its HTML export. Converted `.pptx` output is not kept.
 
 | Sample | Contents |
@@ -99,12 +99,21 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
 | `Publication3` | `.pub` and the stage 1 HTML (it has no pictures) |
 | `Publication4` | `.pub`, plus the stage 1 HTML in `Publication4\` (a blank page) |
 | `petlexia publication`, `petlexia publication2`, `petlexia publication3` | `.pub`, plus the stage 1 HTML and `_files\` in a subfolder of the same name |
+| `sidebyside-row` | `.pub`, PDF and stage 1 export: three pictures in a row |
+| `sidebyside-grid` | `.pub`, PDF and stage 1 export: a 2x2 grid of pictures |
+| `sidebyside-imagetext` | `.pub`, PDF and stage 1 export: pictures beside text boxes |
 
 The second and third petlexia files are named with a space before `.pub`. Stage 1 trims
 that space, so their exports are named `petlexia publication2` and `petlexia publication3`.
 
 `bizcard` and `Publication3` keep their export next to the `.pub`. The others were exported
-later and keep stage 1's own layout, a subfolder named after the publication.
+later and keep stage 1's own layout, a subfolder named after the publication. `bizcard` and
+`Publication3` were exported before stage 1 recorded page sizes, so they have no
+`_pagesize.txt`.
+
+`make_sidebyside.ps1` builds the three `sidebyside` samples in Publisher, including a PDF
+showing how each should look. Its test pictures are lettered squares in `sidebyside-images\`,
+so a picture in the wrong place is easy to spot. It doesn't rewrite a sample that exists.
 
 To convert the samples:
 
