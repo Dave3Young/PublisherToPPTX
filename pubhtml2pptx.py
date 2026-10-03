@@ -52,6 +52,7 @@ Written for the Publisher retirement toolkit at www.david-e-young.com.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -74,6 +75,7 @@ try:
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
     from pptx.enum.shapes import MSO_SHAPE
+    from pptx.oxml.ns import qn
 except ImportError:
     sys.exit("Missing dependency. Run:  pip install python-pptx")
 
@@ -337,6 +339,10 @@ class Para:
     space_after_pt: float = 0.0
     line_spacing: Optional[float] = None
     indent_pt: float = 0.0
+    tab_stops: list = field(default_factory=list)    # [(pos_pt, PbTabAlignmentType)]
+    pub: Optional[dict] = None        # stage 1's record for this paragraph
+    pub_placed: bool = False          # pub was found at this paragraph's place
+    exact_line_pt: Optional[float] = None
 
     def text(self) -> str:
         return "".join(r.text for r in self.runs)
@@ -358,6 +364,7 @@ class Box:
     order: int = 0
     note: str = ""
     anchor: str = "top"            # text: "top" | "middle" | "bottom"
+    fixed: bool = False            # at Publisher's own position: never shifted
 
 
 # Font files for measuring inline text. ImageFont.truetype finds these in
@@ -379,8 +386,129 @@ _HTML_WS_RE = re.compile(r"[ \t\r\n\f]+")
 # to roughly reach the next tab stop, then a space. Several typed spaces come
 # out the same way, so a run counts as tabs only when it ends close to a stop.
 _NBSP_RUN_RE = re.compile("(\xa0{2,} ?)")
+# Any whitespace run holding a non-breaking space, for laying out inline lines.
+_WS_RUN_RE = re.compile("([ \xa0]*\xa0[ \xa0]*)")
 TAB_STOP_PT = 36.0               # Publisher's default tab stops: every half inch
 INLINE_PICTURE_GAP_PT = 2.88     # Publisher's default spacing around a picture
+# Publisher puts a line's extra spacing (above single spacing) below the text;
+# PowerPoint, given exact line spacing, puts about this share of it above.
+PPT_EXTRA_ABOVE = 0.66
+
+
+# ----------------------------------------------------------------------------
+# Stage 1's text layout: each paragraph's real text and formatting
+# ----------------------------------------------------------------------------
+
+OBJECT_CHAR = "\ufffc"           # Publisher's placeholder for an inline picture
+_PUB_TOKEN_RE = re.compile(r"(\s+|\ufffc)")
+TAB_ALIGN = {0: "l", 1: "ctr", 2: "r", 3: "dec"}       # PbTabAlignmentType
+
+
+def pub_key(text: str) -> str:
+    """Matches a paragraph across the HTML and stage 1's layout: its words,
+    with every kind of whitespace removed."""
+    return re.sub(r"\s+", "", text)
+
+
+def load_pub_text(export_dir: str, base: str) -> dict:
+    """Stage 1's <base>_text.json: every paragraph, listed by pub_key. A line
+    break splits a paragraph in the HTML, so each line is indexed too."""
+    path = os.path.join(export_dir, base + "_text.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    index: dict = {}
+
+    def add(par):
+        lines = str(par.get("text", "")).split("\v")
+        for i, line in enumerate(lines):
+            key = pub_key(line)
+            if key:
+                rec = {**par, "text": line,
+                       "firstIndent": par.get("firstIndent", 0) if i == 0 else 0}
+                if len(lines) > 1:
+                    rec["top"] = None          # a line's own position isn't recorded
+                index.setdefault(key, []).append(rec)
+
+    for shape in data.get("shapes", []):
+        for par in shape.get("paragraphs") or []:
+            add(par)
+        for cell in shape.get("cells") or []:
+            for par in cell.get("paragraphs") or []:
+                add(par)
+    return index
+
+
+def pub_words_and_gaps(text: str):
+    """A paragraph's words (pictures count as words) and the whitespace
+    before each word, keyed by word index; the key len(words) is trailing."""
+    words, gaps = [], {}
+    for tok in _PUB_TOKEN_RE.split(text):
+        if not tok:
+            continue
+        if tok.isspace():
+            gaps[len(words)] = gaps.get(len(words), "") + tok
+        else:
+            words.append(tok)
+    return words, gaps
+
+
+def apply_pub_whitespace(runs: list, pub_text: str) -> bool:
+    """Swaps the HTML's whitespace for Publisher's real whitespace, tabs
+    included, keeping each run's formatting. False if the words differ."""
+    html = "".join(r.text for r in runs)
+    h_words, _ = pub_words_and_gaps(html)
+    p_words, p_gaps = pub_words_and_gaps(pub_text)
+    if h_words != p_words:
+        return False
+    spans, pos, wi = [], 0, 0                  # (start, end, replacement)
+    for tok in _PUB_TOKEN_RE.split(html):
+        if not tok:
+            continue
+        if tok.isspace():
+            spans.append((pos, pos + len(tok), p_gaps.get(wi, tok)))
+        else:
+            wi += 1
+        pos += len(tok)
+    si, cpos = 0, 0
+    for run in runs:
+        out = []
+        for k, ch in enumerate(run.text):
+            g = cpos + k
+            while si < len(spans) and spans[si][1] <= g:
+                si += 1
+            if si < len(spans) and spans[si][0] <= g:
+                if g == spans[si][0]:
+                    out.append(spans[si][2])
+                continue
+            out.append(ch)
+        cpos += len(run.text)
+        run.text = "".join(out)
+    return True
+
+
+def next_tab_px(x: float, stops_px: list, default_px: float) -> float:
+    """Where a tab at x lands: the next custom stop, else the next default one."""
+    for stop in stops_px:
+        if stop > x + 0.01:
+            return stop
+    return (int(x // default_px) + 1) * default_px
+
+
+def pub_line_multiple(rec: dict) -> Optional[float]:
+    """A paragraph's line spacing as a multiple, from PbLineSpacingRule."""
+    rule = rec.get("lineRule")
+    if rule == 0:
+        return 1.0
+    if rule == 1:
+        return 1.5
+    if rule == 2:
+        return 2.0
+    if rule == 5:
+        return float(rec.get("lineSpacing") or 1.0)
+    return None                  # exact or at-least spacing: keep the HTML's
 
 
 def snap_to_tab(pos: float, width: float, nbsp_w: float, stop: float) -> Optional[int]:
@@ -432,6 +560,8 @@ class Converter:
         self.order = 0
         # space after the last block _emit_node placed
         self.trailing = 0.0
+        # stage 1's paragraphs, by pub_key; empty for older exports
+        self.pub_text: dict = {}
 
     # -- runs and paragraphs ------------------------------------------------
 
@@ -455,7 +585,7 @@ class Converter:
         )
 
     def collect_paras(self, nodes, sheet: StyleSheet, inherited: dict,
-                      stop_nodes: set) -> list:
+                      stop_nodes: set, region=None) -> list:
         """Paragraphs for a list of sibling nodes (or a single element's children)."""
         if isinstance(nodes, Tag):
             nodes = list(nodes.children)
@@ -523,9 +653,70 @@ class Converter:
         for p in paras:
             if p.align is None:
                 p.align = base_align
-            if p.align in (None, PP_ALIGN.LEFT):
+            rec, placed = self.pub_find(pub_key(p.text()), region)
+            if rec and apply_pub_whitespace(p.runs, rec["text"]):
+                p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
+                               for t in rec.get("tabs") or []]
+                p.pub, p.pub_placed = rec, placed
+            elif p.align in (None, PP_ALIGN.LEFT):
                 self._restore_tabs(p)
         return [p for p in paras if p.text().strip()]
+
+    def pub_find(self, key: str, region=None):
+        """Stage 1's record for a paragraph: the one inside region (x0, y0, x1,
+        y1 in px) if there is one, so repeated text matches the right copy.
+        Returns (record, found_in_region)."""
+        recs = self.pub_text.get(key)
+        if not recs:
+            return None, False
+        if region is not None:
+            x0, y0, x1, y1 = region
+            tol = 3.0
+            for rec in recs:
+                if rec.get("top") is None or rec.get("left") is None:
+                    continue
+                rx = rec["left"] * self.dpi / 72.0
+                ry = rec["top"] * self.dpi / 72.0
+                if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
+                    return rec, True
+        return recs[0], False
+
+    def _pub_place(self, paras: list):
+        """Puts paragraphs where Publisher puts them: sets each one's exact line
+        spacing and space after so it starts at Publisher's top. Returns (top,
+        height) in px, or None unless every paragraph was found in place."""
+        if not paras or not all(p.pub_placed for p in paras):
+            return None
+        settings = []
+        for i, p in enumerate(paras):
+            rec = p.pub
+            # older layout files can repeat the last line
+            tops = sorted(set(rec.get("lineTops") or [])) or [rec["top"]]
+            height = rec.get("height") or 0.0
+            # the next paragraph's top; an empty paragraph between them isn't
+            # in the HTML, so its space ends up in this one's space after
+            nxt = paras[i + 1].pub["top"] if i + 1 < len(paras) else rec["top"] + height
+            if len(tops) >= 2:
+                line = (tops[-1] - tops[0]) / (len(tops) - 1)
+            else:
+                line = height - (rec.get("spaceAfter") or 0.0) - (rec.get("spaceBefore") or 0.0)
+            if line <= 0:
+                return None
+            # how far PowerPoint would put this paragraph's text below Publisher's
+            multiple = pub_line_multiple(rec) if rec.get("lineRule") in (0, 1, 2, 5) else None
+            lift = PPT_EXTRA_ABOVE * line * (1.0 - 1.0 / multiple) if multiple and multiple > 1 else 0.0
+            settings.append([line, nxt - tops[-1] - line, lift])
+        # raise each paragraph by its lift: the box by the first one's, and
+        # each later one through the space after the paragraph before it
+        for i in range(1, len(settings)):
+            settings[i - 1][1] -= settings[i][2] - settings[i - 1][2]
+        for p, (line, after, _) in zip(paras, settings):
+            p.exact_line_pt = line
+            p.space_after_pt = max(after, 0.0)
+        first, last = paras[0].pub, paras[-1].pub
+        k = self.dpi / 72.0
+        top = first["top"] - settings[0][2]
+        return top * k, (last["top"] + (last.get("height") or 0.0) - top) * k
 
     def _restore_tabs(self, para: Para) -> None:
         """Turns the export's tab runs back into tabs, measuring from the frame
@@ -662,15 +853,27 @@ class Converter:
                     free = max(row_h[ri] - (used - self.trailing) - pad_b, 0.0)
                     dy = {"top": 0.0, "middle": free / 2, "bottom": free}[valign]
                     for b in placed:
-                        b.y += dy
+                        if not b.fixed:
+                            b.y += dy
                     boxes.extend(placed)
                 elif paras:
+                    paras = self.collect_paras(cell, sheet, cs, stop_nodes,
+                                               region=(cx, cy, cx + cw, cy + row_h[ri]))
+                    where = self._pub_place(paras)
                     self.order += 1
-                    boxes.append(Box(kind="text", x=cx + pad, y=cy + pad,
-                                     w=max(cw - 2 * pad, 8.0),
-                                     h=max(row_h[ri] - 2 * pad, 8.0),
-                                     paras=paras, order=self.order, note="table cell",
-                                     anchor=valign))
+                    if where:
+                        top, _ = where
+                        boxes.append(Box(kind="text", x=cx + pad, y=top,
+                                         w=max(cw - 2 * pad, 8.0),
+                                         h=max(cy + row_h[ri] - top, 8.0),
+                                         paras=paras, order=self.order, note="table cell",
+                                         fixed=True))
+                    else:
+                        boxes.append(Box(kind="text", x=cx + pad, y=cy + pad,
+                                         w=max(cw - 2 * pad, 8.0),
+                                         h=max(row_h[ri] - 2 * pad, 8.0),
+                                         paras=paras, order=self.order, note="table cell",
+                                         anchor=valign))
             cy += row_h[ri]
         return boxes, cy - y
 
@@ -752,7 +955,7 @@ class Converter:
             self._inline_items(child, sheet, cs, out)
 
     def _line_boxes(self, para: Tag, sheet: StyleSheet, style: dict,
-                    x, y, w, h, boxes: list) -> float:
+                    x, y, w, h, boxes: list, region=None) -> float:
         """Places a paragraph's pictures and text left to right, wrapping at the
         frame edge, as Publisher lays out a line with inline pictures. Spaces
         keep their width, and the export's tab runs snap to tab stops.
@@ -780,10 +983,31 @@ class Converter:
                 after_space = text.endswith(" ")
                 size_px = to_px(st.get("font-size", "12pt"), self.dpi) or 16.0
                 fam = (st.get("font-family") or "").split(",")[0].strip().strip("'\"")
-                for i, piece in enumerate(_NBSP_RUN_RE.split(text)):
+                for i, piece in enumerate(_WS_RUN_RE.split(text)):
                     if piece:
                         measured.append(["space" if i % 2 else "text", piece, st,
                                          text_width_px(piece, fam, size_px), size_px * 1.2])
+
+        # Publisher's own text for this line: real tabs and tab stops
+        rec, placed = self.pub_find(pub_key("".join(
+            OBJECT_CHAR if m[0] == "img" else (m[1] or "") for m in measured)), region)
+        pub_gaps, stops_px = None, []
+        if rec:
+            h_words = []
+            for m in measured:
+                if m[0] == "img":
+                    h_words.append(OBJECT_CHAR)
+                elif m[0] == "text":
+                    h_words.extend(m[1].split())
+                elif m[0] == "space":
+                    m.append(len(h_words))         # index of the word it precedes
+            p_words, p_gaps = pub_words_and_gaps(rec["text"])
+            if p_words == h_words:
+                pub_gaps = p_gaps
+            else:
+                placed = False
+                stops_px = sorted(t.get("pos", 0.0) * self.dpi / 72.0
+                                  for t in rec.get("tabs") or [])
 
         align = str(style.get("text-align", "left")).lower()
         left_aligned = align not in ("center", "middle", "right")
@@ -795,12 +1019,23 @@ class Converter:
                 lines.append(cur)
                 cur, pos = [], 0.0
                 continue
-            if m[0] == "space" and left_aligned:
+            if m[0] == "space":
                 size_px = m[4] / 1.2
                 fam = (m[2].get("font-family") or "").split(",")[0].strip().strip("'\"")
-                tabs = snap_to_tab(pos, m[3], text_width_px("\xa0", fam, size_px), stop)
-                if tabs:
-                    m[3] = (int(pos // stop) + tabs) * stop - pos
+                if pub_gaps is not None and m[5] in pub_gaps:
+                    # Publisher's real whitespace: tabs go to their stops
+                    space_w = text_width_px(" ", fam, size_px)
+                    end = pos
+                    for ch in pub_gaps[m[5]]:
+                        if ch == "\t":
+                            end = next_tab_px(end, stops_px, stop)
+                        elif ch not in "\v\n\r":
+                            end += space_w
+                    m[3] = end - pos
+                elif left_aligned and m[1].count("\xa0") >= 2:
+                    tabs = snap_to_tab(pos, m[3], text_width_px("\xa0", fam, size_px), stop)
+                    if tabs:
+                        m[3] = (int(pos // stop) + tabs) * stop - pos
             if cur and pos + m[3] > w + 0.5:
                 lines.append(cur)
                 cur, pos = [], 0.0
@@ -810,9 +1045,13 @@ class Converter:
             pos += m[3]
         lines.append(cur)
 
-        # Publisher shares a line's extra spacing above and below it
-        spacing = self._line_multiple(style)
-        cy = y
+        # Without stage 1's position, share the line's extra spacing above and
+        # below it. With it, Publisher's line top is known and the extra
+        # spacing falls below; the tallest picture sits its gap below the top.
+        spacing = (pub_line_multiple(rec) if rec and pub_gaps is not None else None) \
+            or self._line_multiple(style)
+        # where Publisher puts the line, when stage 1 recorded it
+        cy = rec["top"] * self.dpi / 72.0 if placed else y
         for li, line in enumerate(lines):
             if not line:
                 continue
@@ -826,8 +1065,8 @@ class Converter:
                 cx = x + lead
             content_h = max(m[4] for m in line)
             extra = content_h * (spacing - 1.0)
-            top = cy + extra / 2
-            for kind, payload, st, iw, ih in line:
+            top = cy if placed else cy + extra / 2
+            for kind, payload, st, iw, ih, *_ in line:
                 if kind == "img":
                     src = unquote(payload.get("src") or "")
                     if src:
@@ -836,7 +1075,7 @@ class Converter:
                                          y=top + content_h - ih + gap,
                                          w=iw - 2 * gap, h=ih - 2 * gap,
                                          src=src, order=self.order,
-                                         note=payload.get("alt") or ""))
+                                         note=payload.get("alt") or "", fixed=placed))
                 elif kind == "text" and payload.strip():
                     run = self._make_run(payload.strip(), st)
                     size_px = ih / 1.2
@@ -849,7 +1088,7 @@ class Converter:
                     boxes.append(Box(kind="text", x=cx + skip, y=top + content_h - ih,
                                      w=vis * 1.15 + 4.0, h=ih,
                                      paras=[Para(runs=[run])], order=self.order,
-                                     note="inline text"))
+                                     note="inline text", fixed=placed))
                 cx += iw
             cy += content_h + extra
 
@@ -972,8 +1211,19 @@ class Converter:
 
         for kind, payload, seg_style in segs:
             if kind == "text":
-                paras = self.collect_paras(payload, sheet, seg_style, stop_nodes)
+                paras = self.collect_paras(payload, sheet, seg_style, stop_nodes,
+                                           region=(x, y, x + w, y + h))
                 if not paras:
+                    continue
+                where = self._pub_place(paras)
+                if where:
+                    top, used = where
+                    self.order += 1
+                    boxes.append(Box(kind="text", x=content_x, y=top, w=content_w,
+                                     h=max(used, y + h - top if only_text else used, 8.0),
+                                     paras=paras, order=self.order, fixed=True))
+                    cursor = top + used
+                    trailing = 0.0
                     continue
                 est = self.estimate_height(paras, content_w)
                 if only_text and len(text_segs) == 1:
@@ -1006,7 +1256,7 @@ class Converter:
 
             if kind == "line":
                 cursor += self._line_boxes(payload, sheet, seg_style, content_x, cursor,
-                                           content_w, h, boxes)
+                                           content_w, h, boxes, region=(x, y, x + w, y + h))
                 trailing = self.trailing
                 continue
 
@@ -1206,10 +1456,20 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
             p = tf.paragraphs[0] if pi == 0 else tf.add_paragraph()
             if para.align is not None:
                 p.alignment = para.align
-            if para.line_spacing:
+            if para.exact_line_pt:
+                p.line_spacing = Pt(para.exact_line_pt)
+            elif para.line_spacing:
                 p.line_spacing = para.line_spacing
             if "\t" in para.text():
-                p._p.get_or_add_pPr().set("defTabSz", str(int(Pt(TAB_STOP_PT))))
+                ppr = p._p.get_or_add_pPr()
+                ppr.set("defTabSz", str(int(Pt(TAB_STOP_PT))))
+                if para.tab_stops:
+                    tab_lst = ppr.makeelement(qn("a:tabLst"), {})
+                    for pos_pt, algn in sorted(para.tab_stops):
+                        tab_lst.append(ppr.makeelement(qn("a:tab"), {
+                            "pos": str(int(Pt(pos_pt))), "algn": TAB_ALIGN.get(algn, "l")}))
+                    # schema order: after spacing, which is already set
+                    ppr.append(tab_lst)
             if para.indent_pt:
                 # first-line indent: python-pptx has no API for it
                 p._p.get_or_add_pPr().set("indent", str(int(Pt(min(para.indent_pt, 144)))))
@@ -1331,6 +1591,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     dpi = float(args.dpi)
     resolver = ImageResolver(export_dir, export_dir, warn)
     conv = Converter(args, warn)
+    conv.pub_text = load_pub_text(export_dir, base)
 
     prs = Presentation()
     slide_pages = []   # (page_w_px, page_h_px, boxes)

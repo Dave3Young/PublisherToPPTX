@@ -1,0 +1,684 @@
+{
+    "version":  1,
+    "units":  "pt",
+    "shapes":  [
+                   {
+                       "page":  1,
+                       "name":  "Control 1",
+                       "left":  18,
+                       "top":  18,
+                       "width":  756,
+                       "height":  571.86187744140625,
+                       "cells":  [
+                                     {
+                                         "row":  1,
+                                         "col":  1,
+                                         "valign":  1,
+                                         "margins":  [
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918
+                                                     ],
+                                         "paragraphs":  [
+                                                            {
+                                                                "top":  42.75,
+                                                                "left":  110.25,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 42.75
+                                                                             ],
+                                                                "text":  "Need help building a new Website?",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  62.812519073486328,
+                                                                "left":  44.062519073486328,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 62.812519073486328
+                                                                             ],
+                                                                "text":  "Have an existing Website you need supported or changed? ",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  82.68756103515625,
+                                                                "left":  30.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 82.68756103515625
+                                                                             ],
+                                                                "text":  "We specialize in WordPress, but can work with many platforms.",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  102.75,
+                                                                "left":  68.43756103515625,
+                                                                "height":  25.687559127807617,
+                                                                "lineTops":  [
+                                                                                 102.75
+                                                                             ],
+                                                                "text":  "Please visit our web home at https://petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  128.43756103515625,
+                                                                "left":  58.312519073486328,
+                                                                "height":  25.874959945678711,
+                                                                "lineTops":  [
+                                                                                 128.43756103515625
+                                                                             ],
+                                                                "text":  "Phone: (469) 298-8914    Email: david@petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  180,
+                                                                "left":  57,
+                                                                "height":  18.75,
+                                                                "lineTops":  [
+                                                                                 180
+                                                                             ],
+                                                                "text":  "             Contact Information     \t        Website URL",
+                                                                "align":  0,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  198.75,
+                                                                "left":  112.68756103515625,
+                                                                "height":  90.75,
+                                                                "lineTops":  [
+                                                                                 198.75
+                                                                             ],
+                                                                "text":  "￼\t\t￼",
+                                                                "align":  1,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  10,
+                                                                "lineSpacing":  1.1499999761581421,
+                                                                "lineRule":  5,
+                                                                "font":  "Calibri",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            }
+                                                        ]
+                                     },
+                                     {
+                                         "row":  1,
+                                         "col":  2,
+                                         "valign":  1,
+                                         "margins":  [
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918
+                                                     ],
+                                         "paragraphs":  [
+                                                            {
+                                                                "top":  42.75,
+                                                                "left":  488.25,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 42.75
+                                                                             ],
+                                                                "text":  "Need help building a new Website?",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  62.812519073486328,
+                                                                "left":  421.87503051757813,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 62.812519073486328
+                                                                             ],
+                                                                "text":  "Have an existing Website you need supported or changed? ",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  82.68756103515625,
+                                                                "left":  408.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 82.68756103515625
+                                                                             ],
+                                                                "text":  "We specialize in WordPress, but can work with many platforms.",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  102.75,
+                                                                "left":  446.43756103515625,
+                                                                "height":  25.687559127807617,
+                                                                "lineTops":  [
+                                                                                 102.75
+                                                                             ],
+                                                                "text":  "Please visit our web home at https://petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  128.43756103515625,
+                                                                "left":  436.31253051757813,
+                                                                "height":  25.874959945678711,
+                                                                "lineTops":  [
+                                                                                 128.43756103515625
+                                                                             ],
+                                                                "text":  "Phone: (469) 298-8914    Email: david@petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  180,
+                                                                "left":  434.81253051757813,
+                                                                "height":  18.75,
+                                                                "lineTops":  [
+                                                                                 180
+                                                                             ],
+                                                                "text":  "             Contact Information     \t        Website URL",
+                                                                "align":  0,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  198.75,
+                                                                "left":  490.5,
+                                                                "height":  90.75,
+                                                                "lineTops":  [
+                                                                                 198.75
+                                                                             ],
+                                                                "text":  "￼\t\t￼",
+                                                                "align":  1,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  10,
+                                                                "lineSpacing":  1.1499999761581421,
+                                                                "lineRule":  5,
+                                                                "font":  "Calibri",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            }
+                                                        ]
+                                     },
+                                     {
+                                         "row":  2,
+                                         "col":  1,
+                                         "valign":  1,
+                                         "margins":  [
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918
+                                                     ],
+                                         "paragraphs":  [
+                                                            {
+                                                                "top":  328.5,
+                                                                "left":  110.25,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 328.5
+                                                                             ],
+                                                                "text":  "Need help building a new Website?",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  348.56253051757813,
+                                                                "left":  44.062519073486328,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 348.56253051757813
+                                                                             ],
+                                                                "text":  "Have an existing Website you need supported or changed? ",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  368.43756103515625,
+                                                                "left":  30.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 368.43756103515625
+                                                                             ],
+                                                                "text":  "We specialize in WordPress, but can work with many platforms.",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  388.5,
+                                                                "left":  68.43756103515625,
+                                                                "height":  25.687559127807617,
+                                                                "lineTops":  [
+                                                                                 388.5
+                                                                             ],
+                                                                "text":  "Please visit our web home at https://petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  414.18756103515625,
+                                                                "left":  58.312519073486328,
+                                                                "height":  25.874959945678711,
+                                                                "lineTops":  [
+                                                                                 414.18756103515625
+                                                                             ],
+                                                                "text":  "Phone: (469) 298-8914    Email: david@petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  465.75,
+                                                                "left":  57,
+                                                                "height":  18.75,
+                                                                "lineTops":  [
+                                                                                 465.75
+                                                                             ],
+                                                                "text":  "             Contact Information     \t        Website URL",
+                                                                "align":  0,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  484.5,
+                                                                "left":  112.68756103515625,
+                                                                "height":  90.75,
+                                                                "lineTops":  [
+                                                                                 484.5
+                                                                             ],
+                                                                "text":  "￼\t\t￼",
+                                                                "align":  1,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  10,
+                                                                "lineSpacing":  1.1499999761581421,
+                                                                "lineRule":  5,
+                                                                "font":  "Calibri",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            }
+                                                        ]
+                                     },
+                                     {
+                                         "row":  2,
+                                         "col":  2,
+                                         "valign":  1,
+                                         "margins":  [
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918
+                                                     ],
+                                         "paragraphs":  [
+                                                            {
+                                                                "top":  328.5,
+                                                                "left":  488.25,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 328.5
+                                                                             ],
+                                                                "text":  "Need help building a new Website?",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  348.56253051757813,
+                                                                "left":  422.06253051757813,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 348.56253051757813
+                                                                             ],
+                                                                "text":  "Have an existing Website you need supported or changed?",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  368.43756103515625,
+                                                                "left":  408.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 368.43756103515625
+                                                                             ],
+                                                                "text":  "We specialize in WordPress, but can work with many platforms.",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  388.5,
+                                                                "left":  446.43756103515625,
+                                                                "height":  25.687559127807617,
+                                                                "lineTops":  [
+                                                                                 388.5
+                                                                             ],
+                                                                "text":  "Please visit our web home at https://petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  414.18756103515625,
+                                                                "left":  436.31253051757813,
+                                                                "height":  25.874959945678711,
+                                                                "lineTops":  [
+                                                                                 414.18756103515625
+                                                                             ],
+                                                                "text":  "Phone: (469) 298-8914    Email: david@petlexia.com",
+                                                                "align":  1,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  14,
+                                                                "lineSpacing":  1,
+                                                                "lineRule":  0,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  465.75,
+                                                                "left":  434.81253051757813,
+                                                                "height":  18.75,
+                                                                "lineTops":  [
+                                                                                 465.75
+                                                                             ],
+                                                                "text":  "             Contact Information     \t        Website URL",
+                                                                "align":  0,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  484.5,
+                                                                "left":  490.5,
+                                                                "height":  90.75,
+                                                                "lineTops":  [
+                                                                                 484.5
+                                                                             ],
+                                                                "text":  "￼\t\t￼",
+                                                                "align":  1,
+                                                                "firstIndent":  36,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  10,
+                                                                "lineSpacing":  1.1499999761581421,
+                                                                "lineRule":  5,
+                                                                "font":  "Calibri",
+                                                                "size":  10,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            }
+                                                        ]
+                                     }
+                                 ]
+                   }
+               ]
+}

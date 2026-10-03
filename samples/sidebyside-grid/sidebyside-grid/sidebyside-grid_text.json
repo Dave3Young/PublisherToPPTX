@@ -1,0 +1,45 @@
+{
+    "version":  1,
+    "units":  "pt",
+    "shapes":  [
+                   {
+                       "page":  1,
+                       "name":  "Text Box 1",
+                       "left":  72,
+                       "top":  72,
+                       "width":  468,
+                       "height":  40,
+                       "valign":  0,
+                       "margins":  [
+                                       2.880000114440918,
+                                       2.880000114440918,
+                                       2.880000114440918,
+                                       2.880000114440918
+                                   ],
+                       "paragraphs":  [
+                                          {
+                                              "top":  74.8125228881836,
+                                              "left":  74.8125228881836,
+                                              "height":  32.25,
+                                              "lineTops":  [
+                                                               74.8125228881836
+                                                           ],
+                                              "text":  "A 2x2 grid: A B on top, C D below.",
+                                              "align":  0,
+                                              "firstIndent":  0,
+                                              "leftIndent":  0,
+                                              "rightIndent":  0,
+                                              "spaceBefore":  0,
+                                              "spaceAfter":  6,
+                                              "lineSpacing":  1.190000057220459,
+                                              "lineRule":  5,
+                                              "font":  "Calibri",
+                                              "size":  18,
+                                              "tabs":  [
+
+                                                       ]
+                                          }
+                                      ]
+                   }
+               ]
+}
