@@ -336,6 +336,7 @@ class Para:
     align: Optional[object] = None
     space_after_pt: float = 0.0
     line_spacing: Optional[float] = None
+    indent_pt: float = 0.0
 
     def text(self) -> str:
         return "".join(r.text for r in self.runs)
@@ -356,6 +357,46 @@ class Box:
     line_w_px: float = 0.0
     order: int = 0
     note: str = ""
+    anchor: str = "top"            # text: "top" | "middle" | "bottom"
+
+
+# Font files for measuring inline text. ImageFont.truetype finds these in
+# C:\Windows\Fonts by file name.
+FONT_FILES = {
+    "arial": "arial.ttf", "verdana": "verdana.ttf", "calibri": "calibri.ttf",
+    "cambria": "cambria.ttc", "times new roman": "times.ttf", "georgia": "georgia.ttf",
+    "tahoma": "tahoma.ttf", "trebuchet ms": "trebuc.ttf", "segoe ui": "segoeui.ttf",
+    "courier new": "cour.ttf", "garamond": "gara.ttf", "century gothic": "gothic.ttf",
+}
+_font_cache: dict = {}
+
+# Collapses HTML whitespace but keeps non-breaking spaces, which Publisher
+# uses to space out text and inline pictures.
+_HTML_WS_RE = re.compile(r"[ \t\r\n\f]+")
+
+
+def text_width_px(text: str, family: Optional[str], size_px: float) -> float:
+    """Width of a run of text, measured with the real font where possible."""
+    if not text:
+        return 0.0
+    if HAVE_PIL:
+        key = ((family or "").lower(), round(size_px * 4))
+        if key not in _font_cache:
+            font = None
+            fname = FONT_FILES.get(key[0])
+            if fname:
+                try:
+                    from PIL import ImageFont
+                    font = ImageFont.truetype(fname, max(int(round(size_px * 4)), 1))
+                except (OSError, ImportError):
+                    font = None
+            _font_cache[key] = font
+        font = _font_cache[key]
+        if font is not None:
+            return font.getlength(text) / 4.0
+    # rough fallback: spaces are narrow, other characters about half an em
+    spaces = sum(1 for ch in text if ch in " \xa0")
+    return (spaces * 0.28 + (len(text) - spaces) * 0.5) * size_px
 
 
 def is_positioned(style: dict) -> bool:
@@ -417,7 +458,7 @@ class Converter:
                 if str(style.get("white-space", "")).lower().startswith("pre"):
                     text = raw.replace("\r\n", "\n")
                 else:
-                    text = re.sub(r"\s+", " ", raw)
+                    text = _HTML_WS_RE.sub(" ", raw)
                 if not text or (not text.strip() and not current.runs):
                     return
                 run = self._make_run(text, style)
@@ -449,6 +490,8 @@ class Converter:
                         current.line_spacing = round(min(max(lh / fs, 0.5), 3.0), 3)
                     mb = to_px(child_style.get("margin-bottom"), self.dpi)
                     current.space_after_pt = (mb or 0) * 72.0 / self.dpi
+                    ti = to_px(child_style.get("text-indent"), self.dpi)
+                    current.indent_pt = (ti or 0) * 72.0 / self.dpi
                 flush()
             else:
                 for c in node.children:
@@ -560,18 +603,32 @@ class Converter:
                     self.order += 1
                     boxes.append(Box(kind="rect", x=cx, y=cy, w=cw, h=row_h[ri],
                                      fill=fill, order=self.order, note="table cell fill"))
+                # HTML centres cell content vertically unless told otherwise,
+                # and Publisher's export relies on that
+                valign = str(cs.get("vertical-align") or cell.get("valign")
+                             or "middle").lower()
+                if valign not in ("top", "bottom"):
+                    valign = "middle"
                 if cell.find(["img", "table"]) is not None:
                     # pictures or a nested table: lay the cell out like a container
                     cell_style = {k: v for k, v in cs.items()
                                   if not k.startswith(("background", "border"))}
-                    self._emit_node(cell, sheet, cell_style, (cx, cy), cw, row_h[ri],
-                                    boxes, stop_nodes)
+                    placed: list = []
+                    used = self._emit_node(cell, sheet, cell_style, (cx, cy), cw, row_h[ri],
+                                           placed, stop_nodes)
+                    pad_b = to_px(cs.get("padding-bottom"), self.dpi) or 0.0
+                    free = max(row_h[ri] - used - pad_b, 0.0)
+                    dy = {"top": 0.0, "middle": free / 2, "bottom": free}[valign]
+                    for b in placed:
+                        b.y += dy
+                    boxes.extend(placed)
                 elif paras:
                     self.order += 1
                     boxes.append(Box(kind="text", x=cx + pad, y=cy + pad,
                                      w=max(cw - 2 * pad, 8.0),
                                      h=max(row_h[ri] - 2 * pad, 8.0),
-                                     paras=paras, order=self.order, note="table cell"))
+                                     paras=paras, order=self.order, note="table cell",
+                                     anchor=valign))
             cy += row_h[ri]
         return boxes, cy - y
 
@@ -614,6 +671,12 @@ class Converter:
                     flush_buf()
                     segs.append(("table", child, cs))
                     continue
+                if (name in BLOCK_TAGS and child.find("img") is not None
+                        and child.find(["table", *BLOCK_TAGS]) is None):
+                    # a paragraph mixing pictures and text: lay it out as a line
+                    flush_buf()
+                    segs.append(("line", child, cs))
+                    continue
                 if child.find(["img", "table"]) is not None:
                     scan(child, cs)
                     continue
@@ -623,6 +686,113 @@ class Converter:
         scan(el, style)
         flush_buf()
         return segs
+
+    # -- inline lines: pictures and text side by side -------------------------
+
+    def _inline_items(self, node: Tag, sheet: StyleSheet, style: dict, out: list):
+        for child in node.children:
+            if isinstance(child, PreformattedString):
+                continue
+            if isinstance(child, NavigableString):
+                text = _HTML_WS_RE.sub(" ", str(child))
+                if text:
+                    out.append(("text", text, style))
+                continue
+            if not isinstance(child, Tag):
+                continue
+            name = child.name.lower()
+            if name in SKIP_TAGS:
+                continue
+            cs = computed_style(child, sheet, style)
+            if name in ("img", "br"):
+                out.append((name, child, cs))
+                continue
+            self._inline_items(child, sheet, cs, out)
+
+    def _line_boxes(self, para: Tag, sheet: StyleSheet, style: dict,
+                    x, y, w, h, boxes: list) -> float:
+        """Places a paragraph's pictures and text left to right, wrapping at the
+        frame edge. Spaces, including runs of non-breaking spaces, keep their
+        width. Returns the height used."""
+        items: list = []
+        self._inline_items(para, sheet, style, items)
+
+        measured = []          # (kind, payload, style, width, height)
+        after_space = True
+        for kind, payload, st in items:
+            if kind == "img":
+                _, _, iw, ih = self._box_geometry(payload, st, (0.0, 0.0), w, h)
+                iw = iw or 50.0
+                ih = ih or iw
+                measured.append(("img", payload, st, iw, ih))
+                after_space = False
+            elif kind == "br":
+                measured.append(("br", None, st, 0.0, 0.0))
+                after_space = True
+            else:
+                text = payload.lstrip(" ") if after_space else payload
+                if not text:
+                    continue
+                after_space = text.endswith(" ")
+                size_px = to_px(st.get("font-size", "12pt"), self.dpi) or 16.0
+                fam = (st.get("font-family") or "").split(",")[0].strip().strip("'\"")
+                measured.append(("text", text, st, text_width_px(text, fam, size_px),
+                                 size_px * 1.2))
+
+        indent = to_px(style.get("text-indent"), self.dpi) or 0.0
+        lines, cur, cur_w, avail = [], [], 0.0, w - indent
+        for m in measured:
+            if m[0] == "br":
+                lines.append(cur)
+                cur, cur_w, avail = [], 0.0, w
+                continue
+            if cur and cur_w + m[3] > avail + 0.5:
+                lines.append(cur)
+                cur, cur_w, avail = [], 0.0, w
+            cur.append(m)
+            cur_w += m[3]
+        lines.append(cur)
+
+        align = str(style.get("text-align", "left")).lower()
+        cy = y
+        for li, line in enumerate(lines):
+            if not line:
+                continue
+            lead = indent if li == 0 else 0.0
+            total = sum(m[3] for m in line)
+            if align in ("center", "middle"):
+                cx = x + lead + max(w - lead - total, 0.0) / 2
+            elif align == "right":
+                cx = x + max(w - total, lead)
+            else:
+                cx = x + lead
+            line_h = max(m[4] for m in line)
+            for kind, payload, st, iw, ih in line:
+                if kind == "img":
+                    src = unquote(payload.get("src") or "")
+                    if src:
+                        self.order += 1
+                        boxes.append(Box(kind="image", x=cx, y=cy + line_h - ih, w=iw, h=ih,
+                                         src=src, order=self.order,
+                                         note=payload.get("alt") or ""))
+                elif payload.strip():
+                    run = self._make_run(payload.strip(), st)
+                    size_px = ih / 1.2
+                    fam = run.font if run else None
+                    skip = text_width_px(payload[:len(payload) - len(payload.lstrip())],
+                                         fam, size_px)
+                    vis = text_width_px(payload.strip(), fam, size_px)
+                    self.order += 1
+                    # slack so PowerPoint's own metrics don't wrap the text
+                    boxes.append(Box(kind="text", x=cx + skip, y=cy + line_h - ih,
+                                     w=vis * 1.15 + 4.0, h=ih,
+                                     paras=[Para(runs=[run])], order=self.order,
+                                     note="inline text"))
+                cx += iw
+            cy += line_h
+
+        mb = to_px(style.get("margin-bottom"), self.dpi) or 0.0
+        return cy - y + mb
 
     # -- tree walk ----------------------------------------------------------
 
@@ -670,7 +840,8 @@ class Converter:
             self.walk(child, sheet, cstyle, (x, y), new_w, new_h, boxes, depth + 1)
 
     def _emit_node(self, el: Tag, sheet: StyleSheet, style: dict,
-                   origin, cb_w, cb_h, boxes: list, stop_nodes: set):
+                   origin, cb_w, cb_h, boxes: list, stop_nodes: set) -> float:
+        """Adds the node's boxes and returns the height its content used."""
         x, y = origin
         w = cb_w if cb_w else 200.0
         h = cb_h if cb_h else 40.0
@@ -702,13 +873,13 @@ class Converter:
                 self.order += 1
                 boxes.append(Box(kind="image", x=x, y=y, w=w, h=h, src=src,
                                  order=self.order, note=el.get("alt") or ""))
-            return
+            return h
 
         if el.name.lower() == "table":
             # a positioned table: keep its cell grid instead of flowing the cells
-            tb, _ = self._table_boxes(el, sheet, style, x, y, w, h, stop_nodes)
+            tb, used = self._table_boxes(el, sheet, style, x, y, w, h, stop_nodes)
             boxes.extend(tb)
-            return
+            return used
 
         pad_l = to_px(style.get("padding-left"), self.dpi, w) or 0.0
         pad_t = to_px(style.get("padding-top"), self.dpi, h) or 0.0
@@ -753,6 +924,11 @@ class Converter:
                     cursor += ih
                 continue
 
+            if kind == "line":
+                cursor += self._line_boxes(payload, sheet, seg_style, content_x, cursor,
+                                           content_w, h, boxes)
+                continue
+
             # table
             tx, ty, tw, th = self._box_geometry(payload, seg_style,
                                                 (content_x, cursor), content_w, h)
@@ -763,6 +939,7 @@ class Converter:
             boxes.extend(tb)
             if not has_coords(seg_style):
                 cursor += used
+        return cursor - y
 
 
 # ----------------------------------------------------------------------------
@@ -940,13 +1117,17 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
         tf = tb.text_frame
         tf.word_wrap = True
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
-        tf.vertical_anchor = MSO_ANCHOR.TOP
+        tf.vertical_anchor = {"middle": MSO_ANCHOR.MIDDLE,
+                              "bottom": MSO_ANCHOR.BOTTOM}.get(b.anchor, MSO_ANCHOR.TOP)
         for pi, para in enumerate(b.paras):
             p = tf.paragraphs[0] if pi == 0 else tf.add_paragraph()
             if para.align is not None:
                 p.alignment = para.align
             if para.line_spacing:
                 p.line_spacing = para.line_spacing
+            if para.indent_pt:
+                # first-line indent: python-pptx has no API for it
+                p._p.get_or_add_pPr().set("indent", str(int(Pt(min(para.indent_pt, 144)))))
             if para.space_after_pt:
                 p.space_after = Pt(min(para.space_after_pt, 48))
             for run in para.runs:

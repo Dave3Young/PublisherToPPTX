@@ -67,12 +67,13 @@ These settings are at the top of the script:
 | Publisher content | In the `.pptx` |
 | --- | --- |
 | Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
-| Text box | An editable text box, keeping font, size, colour, bold, italic, underline and line breaks. |
+| Text box | An editable text box, keeping font, size, colour, bold, italic, underline, line breaks and first-line indents. |
 | Picture | A picture at the same position and size. With `-HiRes`, stage 1's 300 dpi PNG is used. |
 | Pictures inside groups | Exported one by one in stage 1. |
 | Master page pictures | Exported in stage 1. |
 | Filled box | A filled rectangle. |
-| Table | A rectangle for each cell's fill, plus a text box for each cell's text. |
+| Table | A rectangle for each cell's fill, plus a text box for each cell's text. Cell content is centred vertically unless the cell says otherwise, as in Publisher. |
+| Pictures in a line of text | Placed side by side as in Publisher, with the spaces between them kept. Any words in the line become small text boxes beside the pictures. |
 | Scratch area | Pictures and text left off the page never reach the HTML export, so they go on extra slides at the end. Turn these off with `-NoExtras`. |
 
 BMP, TIFF, WMF, EMF, WebP and ICO images are converted to PNG in an `_pptx_converted`
