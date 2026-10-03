@@ -891,6 +891,45 @@ try {
 
 
             # ====================================================
+            # PAGE SIZE
+            # ====================================================
+            # Publisher's HTML sizes its page wrapper to the content, not
+            # the page, and sometimes writes a malformed height. Record the
+            # real page size, in inches, for stage 2.
+
+            $pageSizePath = Join-Path `
+                $outputFolder `
+                ($baseName + "_pagesize.txt")
+
+            if (Test-Path $pageSizePath) {
+
+                Write-Output "Page size file already exists; not rewriting: $pageSizePath"
+            }
+            else {
+
+                try {
+
+                    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+                    $pageWidthIn = ([double]$doc.PageSetup.PageWidth / 72).ToString("0.####", $inv)
+                    $pageHeightIn = ([double]$doc.PageSetup.PageHeight / 72).ToString("0.####", $inv)
+
+                    Set-Content `
+                        -Path $pageSizePath `
+                        -Value "$pageWidthIn $pageHeightIn" `
+                        -Encoding ASCII `
+                        -ErrorAction Stop
+
+                    Write-Output "Page size: $pageWidthIn x $pageHeightIn in"
+                }
+                catch {
+
+                    Write-Warning "Unable to record the page size."
+                    Write-Warning $_
+                }
+            }
+
+
+            # ====================================================
             # HTML EXPORT
             # ====================================================
 
