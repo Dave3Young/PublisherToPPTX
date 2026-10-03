@@ -616,6 +616,30 @@ def load_pub_text(export_dir: str, base: str) -> dict:
     return index
 
 
+def load_pub_frames(export_dir: str, base: str) -> list:
+    """Stage 1's text frames that show no text: (page, left, top, width,
+    height) in pt. Publisher hides all of such a frame's text as overflow,
+    but the export still writes it into the HTML."""
+    path = os.path.join(export_dir, base + "_text.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    frames = []
+    for shape in data.get("shapes", []):
+        if "paragraphs" not in shape or shape.get("cells"):
+            continue
+        if any(str(par.get("text", "")).strip() for par in shape["paragraphs"]):
+            continue
+        try:
+            frames.append((int(shape.get("page", 0)), float(shape["left"]), float(shape["top"]),
+                           float(shape["width"]), float(shape["height"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return frames
+
+
 def pub_words_and_gaps(text: str):
     """A paragraph's words (pictures count as words) and the whitespace
     before each word, keyed by word index; the key len(words) is trailing."""
@@ -836,6 +860,10 @@ class Converter:
         # stage 1's paragraphs, by pub_key; empty for older exports
         self.pub_text: dict = {}
         self.pub_claimed: set = set()     # ids of records already placed
+        # stage 1's text frames showing no text, and the page being walked
+        self.pub_blank_frames: list = []
+        self.hide_text = 0                # inside such a frame: no paragraphs
+        self.page = 1
 
     # -- runs and paragraphs ------------------------------------------------
 
@@ -866,6 +894,8 @@ class Converter:
     def collect_paras(self, nodes, sheet: StyleSheet, inherited: dict,
                       stop_nodes: set, region=None) -> list:
         """Paragraphs for a list of sibling nodes (or a single element's children)."""
+        if self.hide_text:
+            return []
         if isinstance(nodes, Tag):
             nodes = list(nodes.children)
         paras: list = []
@@ -997,6 +1027,19 @@ class Converter:
                     self.pub_claimed.add(id(rec))
                     return rec, True
         return recs[0], False
+
+    def pub_blank_frame(self, x: float, y: float, w: float, h: float) -> bool:
+        """True if stage 1 saw a text frame here (px) showing no text: all
+        the text the HTML gives it is overflow, which Publisher hides."""
+        k = self.dpi / 72.0
+        tol = 2.0
+        for page, left, top, width, height in self.pub_blank_frames:
+            if page not in (0, self.page):
+                continue
+            if (abs(left * k - x) <= tol and abs(top * k - y) <= tol
+                    and abs(width * k - w) <= tol and abs(height * k - h) <= tol):
+                return True
+        return False
 
     def pub_find_start(self, key: str, region):
         """An unclaimed record inside region whose text is the start of key,
@@ -1653,6 +1696,14 @@ class Converter:
         cursor = y + pad_t
 
         segs = self._segments(el, sheet, style, stop_nodes)
+        blank = self.pub_blank_frame(x, y, w, h)
+        if blank:
+            hidden = " ".join(el.get_text(" ").split())
+            if hidden:
+                self.warn(f"dropped a text box's text, all in its overflow, which "
+                          f"Publisher hides: {hidden[:40]!r}")
+            # its text goes, often in a layout table; pictures and borders stay
+            self.hide_text += 1
         trailing = 0.0
         text_segs = [s for s in segs if s[0] == "text"]
         only_text = len(segs) == len(text_segs)
@@ -1720,6 +1771,8 @@ class Converter:
                 cursor += used
                 trailing = 0.0
         self.trailing = trailing
+        if blank:
+            self.hide_text -= 1
         return cursor - y
 
 
@@ -2341,6 +2394,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     resolver = ImageResolver(export_dir, export_dir, warn)
     conv = Converter(args, warn)
     conv.pub_text = load_pub_text(export_dir, base)
+    conv.pub_blank_frames = load_pub_frames(export_dir, base)
 
     prs = Presentation()
     slide_pages = []   # (page_w_px, page_h_px, boxes)
@@ -2374,6 +2428,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         if pages:
             for el, w, h, st in pages:
                 conv.order = 0
+                conv.page = len(slide_pages) + 1
                 boxes = []
                 conv.walk(el, sheet, {**body_style, **st}, (0.0, 0.0), w, h, boxes)
                 if real_page:
@@ -2384,6 +2439,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
                 slide_pages.append((w, h, boxes))
         else:
             conv.order = 0
+            conv.page = len(slide_pages) + 1
             boxes = []
             page_in = real_page or fallback
             pw = page_in[0] * dpi
