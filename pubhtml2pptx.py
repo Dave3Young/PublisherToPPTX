@@ -565,7 +565,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
         return {}
     index: dict = {}
 
-    def add(par):
+    def add(par, page):
         lines = re.split("[\v\n]", str(par.get("text", "")))
         tops = sorted(set(par.get("lineTops") or []))
         # each line on a row of its own: its row's top places it
@@ -580,7 +580,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             size = len(line.encode("utf-16-le")) // 2
             key = pub_key(line)
             if key:
-                rec = {**par, "text": line,
+                rec = {**par, "text": line, "page": page,
                        "firstIndent": par.get("firstIndent", 0) if i == 0 else 0}
                 ks = [k for k, s in enumerate(starts) if offset <= s < offset + max(size, 1)]
                 if len(lines) > 1:
@@ -608,11 +608,15 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             offset += size + 1
 
     for shape in data.get("shapes", []):
+        try:
+            page = int(shape.get("page", 0))    # 0: a master page
+        except (TypeError, ValueError):
+            page = 0
         for par in shape.get("paragraphs") or []:
-            add(par)
+            add(par, page)
         for cell in shape.get("cells") or []:
             for par in cell.get("paragraphs") or []:
-                add(par)
+                add(par, page)
     return index
 
 
@@ -1019,7 +1023,7 @@ class Converter:
             for rec in recs:
                 if rec.get("top") is None or rec.get("left") is None:
                     continue
-                if id(rec) in self.pub_claimed:
+                if id(rec) in self.pub_claimed or rec.get("page", 0) not in (0, self.page):
                     continue
                 rx = rec["left"] * self.dpi / 72.0
                 ry = rec["top"] * self.dpi / 72.0
@@ -1052,7 +1056,8 @@ class Converter:
             if len(k) < 20 or len(k) >= len(key) or not key.startswith(k):
                 continue
             for rec in recs:
-                if rec.get("top") is None or id(rec) in self.pub_claimed:
+                if (rec.get("top") is None or id(rec) in self.pub_claimed
+                        or rec.get("page", 0) not in (0, self.page)):
                     continue
                 rx = rec["left"] * self.dpi / 72.0
                 ry = rec["top"] * self.dpi / 72.0
@@ -1082,6 +1087,8 @@ class Converter:
                 if end >= bottom - 2.5 * (last.get("height") or 0.0) / lines * self.dpi / 72.0:
                     self.warn(f"dropped {len(text) - n} paragraph(s) in a text box's "
                               f"overflow, which Publisher hides: {text[n].text()[:40]!r}")
+                    # drop them even when the rest can't be placed below
+                    del paras[next(i for i, p in enumerate(paras) if p is text[n]):]
                     text = text[:n]
         if not text or not all(p.pub_placed for p in text):
             return None
@@ -1863,6 +1870,44 @@ def _vml_text_area(shape: Tag, shapetype: Optional[Tag], geom: str, adj: tuple,
     return (0.0, 0.0, 0.0, 0.0)
 
 
+DOWNLEVEL_RE = re.compile(rb"<!\[if\s+([^\]]*)\]>|<!\[endif\]>", re.I)
+
+
+def drop_downlevel_fallbacks(raw: bytes) -> bytes:
+    """Publisher can write a shape inline as <![if mso]>VML<![endif]> followed by
+    <![if !mso]><img><![endif]>, the <img> being a picture of the same shape for
+    other browsers. lxml drops the markers and keeps both, so the shape's text
+    would arrive twice: once as text, once as a picture. Removes each !mso branch
+    that directly follows an mso branch. Branches nest (<![if RotText]>)."""
+    out, pos, depth, mso_end = [], 0, 0, None
+    stack = []
+    for m in DOWNLEVEL_RE.finditer(raw):
+        if m.group(1) is not None:
+            cond = m.group(1).strip().lower()
+            if depth == 0 and cond == b"!mso" and mso_end is not None \
+                    and not raw[mso_end:m.start()].strip():
+                out.append(raw[pos:m.start()])
+                pos = None
+            stack.append((cond, m.start()))
+            depth += 1
+            continue
+        if not stack:
+            continue
+        cond, _ = stack.pop()
+        depth -= 1
+        if depth:
+            continue
+        if pos is None:
+            pos = m.end()               # resume after the dropped !mso branch
+            mso_end = None
+        else:
+            mso_end = m.end() if cond == b"mso" else None
+    if pos is None:
+        return raw
+    out.append(raw[pos:])
+    return b"".join(out)
+
+
 def restore_vml_pictures(soup: BeautifulSoup) -> int:
     """A picture cropped to a shape (a rounded rectangle, say) can come only in
     the VML, with no <img> for other browsers. Adds a positioned <img> for each,
@@ -1947,8 +1992,11 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
             f"padding-right:{area[2] + inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
             f"padding-bottom:{area[3] + inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
         ]
-        fill = str(shape.get("fillcolor") or "").split()
-        if fill and str(shape.get("filled", "t")).lower() not in ("f", "false"):
+        # VML shapes are filled unless they say otherwise, white by default
+        fill = str(shape.get("fillcolor") or "white").split() or ["white"]
+        fill_el = shape.find("v:fill", recursive=False)
+        if (str(shape.get("filled", "t")).lower() not in ("f", "false")
+                and str((fill_el or {}).get("on", "t")).lower() not in ("f", "false")):
             styles.append(f"background-color:{fill[0]}")
         stroke = shape.find("v:stroke")
         if (str(shape.get("stroked", "t")).lower() not in ("f", "false")
@@ -2402,7 +2450,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     for html_path in htmls:
         with open(html_path, "rb") as fh:
             raw = fh.read()
-        soup = BeautifulSoup(raw, "lxml")
+        soup = BeautifulSoup(drop_downlevel_fallbacks(raw), "lxml")
         restore_vml_text_boxes(soup)
         restore_vml_pictures(soup)
         sheet = StyleSheet()
