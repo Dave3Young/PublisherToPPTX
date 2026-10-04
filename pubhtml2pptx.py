@@ -425,6 +425,7 @@ FONT_SUBSTITUTES = {
     "abadi mt": "Gill Sans MT", "abadi mt condensed": "Gill Sans MT Condensed",
     "abadi mt condensed light": "Gill Sans MT Condensed",
     "abadi mt condensed extra bold": "Gill Sans MT Condensed",
+    "elephant pro": "Elephant",
     # Chinese fonts: Publisher draws these with SimSun's Latin letters
     "fangsong": "SimSun", "kaiti": "SimSun",
 }

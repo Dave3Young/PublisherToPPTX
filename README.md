@@ -99,8 +99,9 @@ folder inside the export folder. A table becomes separate boxes, not a PowerPoin
 Warnings are counted in the run summary, and each one is listed with `-Report` or `-Verbose`.
 - **Fonts:** Canva replaces any font it doesn't have, so check line breaks on every page
   before printing. A font not installed on the converting computer is written as Calibri,
-  which is what Publisher draws in its place. Abadi becomes Gill Sans MT, and FangSong and
-  KaiTi become SimSun; add others to `FONT_SUBSTITUTES` in `pubhtml2pptx.py`.
+  which is what Publisher draws in its place. Abadi becomes Gill Sans MT, Elephant Pro
+  becomes Elephant, and FangSong and KaiTi become SimSun; add others to `FONT_SUBSTITUTES`
+  in `pubhtml2pptx.py`.
 - **Line breaks:** each line of a paragraph ends in a line break where Publisher ends it.
   Editing the text in Canva or PowerPoint doesn't rewrap those lines, so convert with
   `-Reflow` if the text will be rewritten. PowerPoint sets some fonts up to about 2% wider
