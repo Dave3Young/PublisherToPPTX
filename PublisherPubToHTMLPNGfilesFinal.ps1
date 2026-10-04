@@ -11,6 +11,9 @@ Disclaimer: This script is provided for educational and informational purposes o
     for recursive folder processing
     .\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub" -Recurse
 
+    to rewrite the text layout files (<name>_text.json), which are otherwise kept
+    .\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub" -RefreshTextLayout
+
 - scans each Publisher page for pbPicture and pbLinkedPicture shapes,
 - recursively scans pbGroup shapes for pictures inside groups,
 - exports only those individual picture objects as PNG files,
@@ -50,7 +53,10 @@ param
     $Filter,
 
     [switch]
-    $Recurse
+    $Recurse,
+
+    [switch]
+    $RefreshTextLayout
 )
 
 if (-not $PSBoundParameters.ContainsKey('Filter')) {
@@ -324,9 +330,13 @@ function Get-PublisherParagraphs
             # past the end of the text it keeps returning the last line, so
             # stop at a line that starts after the paragraph or doesn't move on.
             # lineStarts holds where each line starts in the paragraph's text,
-            # so stage 2 can break lines where Publisher does.
+            # so stage 2 can break lines where Publisher does, and lineLefts
+            # and lineWidths where each line sits across the page, which
+            # moves where text wraps around a picture or another frame.
             $lineTops = New-Object System.Collections.Generic.List[double]
             $lineStarts = New-Object System.Collections.Generic.List[int]
+            $lineLefts = New-Object System.Collections.Generic.List[double]
+            $lineWidths = New-Object System.Collections.Generic.List[double]
             $top = $null
             $left = $null
             $height = $null
@@ -355,6 +365,8 @@ function Get-PublisherParagraphs
                     $prevStart = $line.Start
                     $lineTops.Add($lineTop)
                     $lineStarts.Add([int]($line.Start - $para.Start))
+                    $lineLefts.Add([double]$line.BoundLeft)
+                    $lineWidths.Add([double]$line.BoundWidth)
                 }
             }
             catch { }
@@ -365,6 +377,8 @@ function Get-PublisherParagraphs
                 height      = $height
                 lineTops    = $lineTops
                 lineStarts  = $lineStarts
+                lineLefts   = $lineLefts
+                lineWidths  = $lineWidths
                 text        = $texts[$i - 1]
                 align       = [int]$format.Alignment
                 firstIndent = [double]$format.FirstLineIndent
@@ -484,10 +498,17 @@ function Add-PublisherTextLayout
 
                 $frame = $shape.TextFrame
 
+                # pbTextFrame (17) or a shape with text, such as an autoshape
+                $record.type = [int]$shape.Type
                 $record.valign = [int]$frame.VerticalTextAlignment
                 $record.margins = @([double]$frame.MarginLeft, [double]$frame.MarginTop,
                                     [double]$frame.MarginRight, [double]$frame.MarginBottom)
                 $record.paragraphs = (Get-PublisherParagraphs -TextRange $textRange)
+
+                # Text that doesn't fit is hidden; the export still writes it.
+                $overflowing = $false
+                try { $overflowing = [bool]$frame.Overflowing } catch { }
+                $record.overflowing = $overflowing
 
                 $Records.Add($record)
             }
@@ -1167,7 +1188,7 @@ try {
                 $outputFolder `
                 ($baseName + "_text.json")
 
-            if (Test-Path $textLayoutPath) {
+            if ((Test-Path $textLayoutPath) -and -not $RefreshTextLayout) {
 
                 Write-Output "Text layout file already exists; not rewriting: $textLayoutPath"
             }

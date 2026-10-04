@@ -374,6 +374,8 @@ class Para:
     line_spacing: Optional[float] = None
     indent_pt: float = 0.0            # first line, from the left indent; may be negative
     left_indent_pt: float = 0.0
+    right_indent_pt: float = 0.0
+    bullet: bool = False              # the export wrote Publisher's bullet as text
     keep_lines: bool = False          # lines broken where Publisher breaks them
     tab_stops: list = field(default_factory=list)    # [(pos_pt, PbTabAlignmentType)]
     pub: Optional[dict] = None        # stage 1's record for this paragraph
@@ -565,7 +567,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
         return {}
     index: dict = {}
 
-    def add(par, page):
+    def add(par, page, frame=None, last=False):
         lines = re.split("[\v\n]", str(par.get("text", "")))
         tops = sorted(set(par.get("lineTops") or []))
         # each line on a row of its own: its row's top places it
@@ -573,6 +575,12 @@ def load_pub_text(export_dir: str, base: str) -> dict:
         # with each line's start, every wrapped line's top is known too
         starts = par.get("lineStarts") or []
         all_tops = par.get("lineTops") or []
+        lefts = par.get("lineLefts") or []
+        if len(lefts) != len(starts):
+            lefts = []
+        widths = par.get("lineWidths") or []
+        if len(widths) != len(lefts):
+            widths = []
         wrapped = (len(lines) > 1 and not rows and par.get("top") is not None
                    and len(starts) == len(all_tops))
         offset = 0                             # the line's start, in UTF-16 units
@@ -580,12 +588,16 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             size = len(line.encode("utf-16-le")) // 2
             key = pub_key(line)
             if key:
-                rec = {**par, "text": line, "page": page,
-                       "firstIndent": par.get("firstIndent", 0) if i == 0 else 0}
+                rec = {**par, "text": line, "page": page, "frame": frame,
+                       "firstIndent": par.get("firstIndent", 0) if i == 0 else 0,
+                       # the last text the frame shows; the rest is overflow
+                       "overflowAfter": last and i + 1 == len(lines)}
                 ks = [k for k, s in enumerate(starts) if offset <= s < offset + max(size, 1)]
                 if len(lines) > 1:
                     # this line's own line starts, from its start
                     rec["lineStarts"] = [starts[k] - offset for k in ks]
+                    rec["lineLefts"] = [lefts[k] for k in ks] if lefts else []
+                    rec["lineWidths"] = [widths[k] for k in ks] if widths else []
                 if wrapped and ks and starts[ks[0]] == offset:
                     end = all_tops[ks[-1] + 1] if ks[-1] + 1 < len(all_tops) else (
                         par["top"] + (par.get("height") or 0.0))
@@ -612,12 +624,36 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             page = int(shape.get("page", 0))    # 0: a master page
         except (TypeError, ValueError):
             page = 0
-        for par in shape.get("paragraphs") or []:
-            add(par, page)
+        pars = shape.get("paragraphs") or []
+        frame = _pub_text_area(shape, pars)
+        for n, par in enumerate(pars):
+            add(par, page, frame, bool(shape.get("overflowing")) and n + 1 == len(pars))
         for cell in shape.get("cells") or []:
             for par in cell.get("paragraphs") or []:
                 add(par, page)
     return index
+
+
+def _pub_text_area(shape: dict, pars: list):
+    """A frame's text area (left, right in pt), where its lines start unless
+    they wrap around something; None if unknown. An autoshape keeps its text
+    inside its geometry's own inset, which stage 1 doesn't give: there the
+    least indented left-aligned line is taken to start at the edge."""
+    try:
+        margins = shape.get("margins") or [0.0, 0.0, 0.0, 0.0]
+        fl = float(shape["left"]) + float(margins[0])
+        fr = float(shape["left"]) + float(shape["width"]) - float(margins[2])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    if shape.get("type", PB_TEXT_FRAME) == PB_TEXT_FRAME:
+        return fl, fr
+    lead = [x - fl - max(float(par.get("leftIndent") or 0.0), 0.0)
+            for par in pars if par.get("align") not in (1, 2)
+            for x in (par.get("lineLefts") or [])[1:]]
+    if not lead:
+        return None
+    inset = max(min(lead), 0.0)
+    return fl + inset, fr - inset
 
 
 def load_pub_frames(export_dir: str, base: str) -> list:
@@ -755,6 +791,112 @@ def _pub_line_breaks(para, rec: dict) -> bool:
         pos += len(run.text)
         run.text = "".join(out)
     return True
+
+
+# Lines starting this far (pt) from where their frame and indents put them
+# have wrapped around a picture or another frame
+WRAP_SHIFT_PT = 6.0
+PB_TEXT_FRAME = 17                     # PbShapeType of a plain text box
+
+
+def _split_lines(runs: list) -> list:
+    """A paragraph's runs, line by line at its line breaks."""
+    lines = [[]]
+    for run in runs:
+        for k, piece in enumerate(run.text.split("\v")):
+            if k:
+                lines.append([])
+            if piece:
+                lines[-1].append(dataclasses.replace(run, text=piece))
+    return lines
+
+
+def _pub_wrap_indents(para) -> list:
+    """Moves the lines Publisher wraps around a picture or another frame to
+    where stage 1 saw them start (lineLefts). PowerPoint has no indent for a
+    single line, so a paragraph whose lines start in different places is
+    split into one paragraph per run of lines starting alike, on the same
+    line spacing. A centred or right-aligned line keeps its alignment within
+    the narrower space. Returns the paragraph(s)."""
+    rec = para.pub or {}
+    frame, lefts = rec.get("frame"), rec.get("lineLefts") or []
+    if not para.keep_lines or not frame or not lefts:
+        return [para]
+    lines = _split_lines(para.runs)
+    if len(lines) != len(lefts) or not all(lines):
+        return [para]
+    fl, fr = frame
+    align = rec.get("align")
+    widths = rec.get("lineWidths") or []
+    if len(widths) != len(lefts):
+        widths = []                            # older layout files: estimate them
+    pub_text = str(rec.get("text", ""))
+    cuts = [_utf16_index(pub_text, s) for s in rec.get("lineStarts") or []] + [len(pub_text)]
+    shifts = []                                # (left, right) indent to add, pt
+    for j, (line, x) in enumerate(zip(lines, lefts)):
+        lead = para.left_indent_pt + (para.indent_pt if j == 0 else 0.0)
+        text = "".join(r.text for r in line)
+        if align in (1, 2):
+            if "\t" in text:
+                shifts.append((0.0, 0.0))
+                continue
+            pub_line = pub_text[cuts[j]:cuts[j + 1]] if j + 1 < len(cuts) else ""
+            # a line's bounds run over a run of spaces at its end, out to
+            # the frame's edge, though Publisher aligns only what shows
+            if widths and len(pub_line) - len(pub_line.rstrip()) < 2:
+                width = widths[j]
+                tol = WRAP_SHIFT_PT
+            else:
+                width = 0.0
+                for r in line:
+                    piece = r.text.rstrip() if r is line[-1] else r.text
+                    if r.caps:
+                        piece = piece.upper()
+                    width += (text_width_px(piece, r.font, r.size_pt or 12.0, bool(r.bold),
+                                            bool(r.italic))
+                              + (r.spacing_pt or 0.0) * len(piece))
+                # only an estimate, so only a clear shift counts
+                tol = max(WRAP_SHIFT_PT, 0.05 * width)
+            area_l, area_r = fl + lead, fr - float(rec.get("rightIndent") or 0.0)
+            if align == 1:
+                s = x + width / 2 - (area_l + area_r) / 2
+                shifts.append((2 * s, 0.0) if s > tol else (0.0, -2 * s) if s < -tol
+                              else (0.0, 0.0))
+            else:
+                gap = area_r - (x + width)
+                shifts.append((0.0, gap) if gap > tol else (0.0, 0.0))
+            continue
+        if j == 0 and para.bullet:
+            # stage 1's line starts after Publisher's own bullet
+            if para.indent_pt >= 0:
+                shifts.append((0.0, 0.0))
+                continue
+            lead = para.left_indent_pt
+        d = x - (fl + lead)
+        shifts.append((d, 0.0) if d > WRAP_SHIFT_PT else (0.0, 0.0))
+    if not any(l or r for l, r in shifts):
+        return [para]
+    groups = []                                # [first line, last line, shift]
+    for j, sh in enumerate(shifts):
+        if groups and all(abs(a - b) < 1.0 for a, b in zip(groups[-1][2], sh)):
+            groups[-1][1] = j
+        else:
+            groups.append([j, j, sh])
+    out = []
+    for gi, (a, b, (dl, dr)) in enumerate(groups):
+        runs = []
+        for j in range(a, b + 1):
+            line = [dataclasses.replace(r) for r in lines[j]]
+            if j > a:
+                line[0].text = "\v" + line[0].text
+            runs.extend(line)
+        out.append(dataclasses.replace(
+            para, runs=runs,
+            left_indent_pt=para.left_indent_pt + dl,
+            indent_pt=para.indent_pt if gi == 0 else 0.0,
+            right_indent_pt=para.right_indent_pt + dr,
+            space_after_pt=para.space_after_pt if gi + 1 == len(groups) else 0.0))
+    return out
 
 
 # PowerPoint can set text up to about 2% wider than Publisher (it varies with
@@ -987,6 +1129,7 @@ class Converter:
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
                 p.pub, p.pub_placed = rec, placed
+                p.bullet = bool(bullet_runs)
                 p.keep_lines = self.keep_lines and _pub_line_breaks(p, rec)
                 if not p.keep_lines:
                     _space_breaks(p, rec)
@@ -1084,7 +1227,9 @@ class Converter:
                 last = text[n - 1].pub
                 lines = max(len(last.get("lineTops") or []), 1)
                 end = (last["top"] + (last.get("height") or 0.0)) * self.dpi / 72.0
-                if end >= bottom - 2.5 * (last.get("height") or 0.0) / lines * self.dpi / 72.0:
+                # stage 1 says the frame overflows, or the text reaches its bottom
+                if last.get("overflowAfter") or \
+                        end >= bottom - 2.5 * (last.get("height") or 0.0) / lines * self.dpi / 72.0:
                     self.warn(f"dropped {len(text) - n} paragraph(s) in a text box's "
                               f"overflow, which Publisher hides: {text[n].text()[:40]!r}")
                     # drop them even when the rest can't be placed below
@@ -1125,6 +1270,7 @@ class Converter:
             p.exact_line_pt = line
             p.space_after_pt = max(after, 0.0)
         first, last = paras[0].pub, paras[-1].pub
+        paras[:] = [q for p in paras for q in _pub_wrap_indents(p)]
         k = self.dpi / 72.0
         top = first["top"] - settings[0][2]
         return top * k, (last["top"] + (last.get("height") or 0.0) - top) * k
@@ -2296,6 +2442,8 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                     ppr.append(tab_lst)
             if para.left_indent_pt:
                 p._p.get_or_add_pPr().set("marL", str(int(Pt(min(para.left_indent_pt, 288)))))
+            if para.right_indent_pt:
+                p._p.get_or_add_pPr().set("marR", str(int(Pt(min(para.right_indent_pt, 288)))))
             if para.indent_pt:
                 # first-line indent, negative for a hanging one: python-pptx
                 # has no API for either
@@ -2307,7 +2455,8 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                 carry = want - after
                 if after:
                     p.space_after = Pt(after)
-            tighten = _line_tightening(para, w * 72.0 / dpi) if para.keep_lines else {}
+            tighten = (_line_tightening(para, w * 72.0 / dpi - para.right_indent_pt)
+                       if para.keep_lines else {})
             line = 0
             for run in para.runs:
                 # "\v" is a line break inside the paragraph
