@@ -883,6 +883,28 @@ try {
         }
 
         # --------------------------------------------------------
+        # Publisher 2010 crashes (MSVCR90 invalid parameter) when
+        # it saves to a path of 260 characters or more, which loses
+        # the rest of the publication. Skip it with a clear error.
+        # --------------------------------------------------------
+
+        $longestPath = Join-Path `
+            $outputFolder `
+            ($baseName + "_scratch_000_image_000.png")
+
+        if ($longestPath.Length -gt 259) {
+
+            Write-Error ("Output paths would be too long for Publisher " +
+                "($($longestPath.Length) characters; the limit is 259). " +
+                "Move or rename the publication so the folder path is " +
+                "$($longestPath.Length - 259) characters shorter: $fileFullName")
+
+            $fileFailCount++
+
+            continue
+        }
+
+        # --------------------------------------------------------
         # Open Publisher document
         # --------------------------------------------------------
 
