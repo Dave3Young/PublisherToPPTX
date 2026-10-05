@@ -102,11 +102,12 @@ SHAPE_GEOMS = {
     "wedgeRectCallout": MSO_SHAPE.RECTANGULAR_CALLOUT,
     "wedgeEllipseCallout": MSO_SHAPE.OVAL_CALLOUT,
 }
-# VML dashstyle -> PowerPoint dash
+# VML dashstyle -> PowerPoint dash. python-pptx writes ROUND_DOT as sysDot (1:1 dots)
+# and SQUARE_DOT as sysDash (3:1 short dashes), so dots map to ROUND_DOT.
 LINE_DASHES = {
-    "dot": MSO_LINE_DASH_STYLE.ROUND_DOT, "1 1": MSO_LINE_DASH_STYLE.SQUARE_DOT,
-    "shortdot": MSO_LINE_DASH_STYLE.SQUARE_DOT, "dash": MSO_LINE_DASH_STYLE.DASH,
-    "shortdash": MSO_LINE_DASH_STYLE.DASH, "dashdot": MSO_LINE_DASH_STYLE.DASH_DOT,
+    "dot": MSO_LINE_DASH_STYLE.ROUND_DOT, "1 1": MSO_LINE_DASH_STYLE.ROUND_DOT,
+    "shortdot": MSO_LINE_DASH_STYLE.ROUND_DOT, "dash": MSO_LINE_DASH_STYLE.DASH,
+    "shortdash": MSO_LINE_DASH_STYLE.SQUARE_DOT, "dashdot": MSO_LINE_DASH_STYLE.DASH_DOT,
     "shortdashdot": MSO_LINE_DASH_STYLE.DASH_DOT, "longdash": MSO_LINE_DASH_STYLE.LONG_DASH,
     "longdashdot": MSO_LINE_DASH_STYLE.LONG_DASH_DOT,
     "longdashdotdot": MSO_LINE_DASH_STYLE.DASH_DOT_DOT,
@@ -406,6 +407,7 @@ class Box:
     geom: str = "rect"             # rect: a SHAPE_GEOMS key
     adj: tuple = ()                # rect: the preset's adjustment values
     dash: Optional[str] = None     # rect: a LINE_DASHES key
+    round_cap: bool = False        # rect: outline drawn with round line ends
     z: Optional[int] = None        # z-index of the positioned shape it came from
 
 
@@ -1825,7 +1827,8 @@ class Converter:
             boxes.append(Box(kind="rect", x=x, y=y, w=w, h=h, fill=fill,
                              line=border, line_w_px=border_w, order=self.order,
                              geom=style.get("x-geom") or "rect", adj=adj,
-                             dash=style.get("x-dash")))
+                             dash=style.get("x-dash"),
+                             round_cap=style.get("x-cap") == "round"))
 
         if el.name.lower() == "img":
             src = unquote(el.get("src") or "")
@@ -2153,6 +2156,8 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
             dash = str((stroke or {}).get("dashstyle") or "").lower()
             if dash and dash != "solid":
                 styles.append(f"x-dash:{dash}")
+            if str((stroke or {}).get("endcap") or "").lower() == "round":
+                styles.append("x-cap:round")
         if geom != "rect":
             styles.append(f"x-geom:{geom}")
         if adj:
@@ -2403,6 +2408,8 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                 shp.line.width = Pt(max(b.line_w_px * 72.0 / dpi, 0.5))
                 if b.dash in LINE_DASHES:
                     shp.line.dash_style = LINE_DASHES[b.dash]
+                if b.round_cap:
+                    shp.line._get_or_add_ln().set("cap", "rnd")
             else:
                 shp.line.fill.background()
             shp.shadow.inherit = False
