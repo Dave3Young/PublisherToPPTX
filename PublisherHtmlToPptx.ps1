@@ -4,7 +4,7 @@ Disclaimer: This script is provided for educational and informational purposes o
     consequences, including but not limited to data loss, system instability, or unintended results.
     Use at your own risk.
 
-    Companion to PublisherPubToHTMLPNGfilesFinal.ps1.
+    Companion to PublisherPubToHtmlForPptx.ps1.
 
     That script leaves one export subfolder per .pub file, containing <BaseName>.htm, the
     <BaseName>_files folder, and the 300 dpi PNGs pulled out of the pages, master pages and

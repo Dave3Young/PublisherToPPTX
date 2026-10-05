@@ -3,7 +3,7 @@
 pubhtml2pptx.py
 ===============
 
-Converts the filtered-HTML + PNG output of PublisherPubToHTMLPNGfilesFinal.ps1
+Converts the filtered-HTML + PNG output of PublisherPubToHtmlForPptx.ps1
 into a .pptx whose slides reproduce the original Publisher page layout, so the
 result can be imported into Canva (or PowerPoint/Google Slides) with the text
 boxes and pictures arriving as SEPARATE EDITABLE ELEMENTS rather than one
@@ -2919,7 +2919,7 @@ def explain_no_exports(root: str, scan: dict) -> str:
             lines.append(f"    ... and {len(pubs) - 5} more")
         lines.append("")
         lines.append("  Run the export script first, in the folder holding the .pub files:")
-        lines.append('    .\\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub" -Recurse')
+        lines.append('    .\\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub" -Recurse')
         lines.append("")
         lines.append("  That leaves one subfolder per publication containing <BaseName>.htm,")
         lines.append("  which is what this converter reads.")

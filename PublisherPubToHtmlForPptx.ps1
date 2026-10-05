@@ -6,13 +6,13 @@ Disclaimer: This script is provided for educational and informational purposes o
     To run:
    
     for current folder only
-    .\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub"
+    .\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub"
    
     for recursive folder processing
-    .\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub" -Recurse
+    .\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub" -Recurse
 
     to rewrite the text layout files (<name>_text.json), which are otherwise kept
-    .\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub" -RefreshTextLayout
+    .\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub" -RefreshTextLayout
 
 - scans each Publisher page for pbPicture and pbLinkedPicture shapes,
 - recursively scans pbGroup shapes for pictures inside groups,
