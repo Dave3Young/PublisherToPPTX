@@ -9,6 +9,7 @@
                        "top":  72,
                        "width":  248,
                        "height":  200,
+                       "type":  17,
                        "valign":  0,
                        "margins":  [
                                        2.880000114440918,
@@ -25,6 +26,18 @@
                                                                74.8125228881836,
                                                                98.0625228881836
                                                            ],
+                                              "lineStarts":  [
+                                                                 0,
+                                                                 37
+                                                             ],
+                                              "lineLefts":  [
+                                                                294.75,
+                                                                294.75
+                                                            ],
+                                              "lineWidths":  [
+                                                                 225.56251525878906,
+                                                                 176.25
+                                                             ],
                                               "text":  "This text box sits to the right of image A, top-aligned with it.",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -48,6 +61,18 @@
                                                                127.31252288818359,
                                                                150.56251525878906
                                                            ],
+                                              "lineStarts":  [
+                                                                 0,
+                                                                 39
+                                                             ],
+                                              "lineLefts":  [
+                                                                294.75,
+                                                                294.75
+                                                            ],
+                                              "lineWidths":  [
+                                                                 243.75,
+                                                                 53.437557220458984
+                                                             ],
                                               "text":  "Image B sits below, with a text box to its left.",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -63,7 +88,8 @@
 
                                                        ]
                                           }
-                                      ]
+                                      ],
+                       "overflowing":  false
                    },
                    {
                        "page":  1,
@@ -72,6 +98,7 @@
                        "top":  300,
                        "width":  248,
                        "height":  200,
+                       "type":  17,
                        "valign":  0,
                        "margins":  [
                                        2.880000114440918,
@@ -88,6 +115,18 @@
                                                                302.81253051757813,
                                                                326.06253051757813
                                                            ],
+                                              "lineStarts":  [
+                                                                 0,
+                                                                 40
+                                                             ],
+                                              "lineLefts":  [
+                                                                74.8125228881836,
+                                                                74.8125228881836
+                                                            ],
+                                              "lineWidths":  [
+                                                                 238.31251525878906,
+                                                                 21.937480926513672
+                                                             ],
                                               "text":  "This text box sits to the left of image B.",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -103,7 +142,8 @@
 
                                                        ]
                                           }
-                                      ]
+                                      ],
+                       "overflowing":  false
                    }
                ]
 }
