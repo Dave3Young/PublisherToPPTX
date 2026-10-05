@@ -1049,6 +1049,7 @@ class Converter:
             nodes = list(nodes.children)
         paras: list = []
         current = Para()
+        styled: set = set()        # lines an inner block already styled
 
         def flush():
             nonlocal current
@@ -1088,20 +1089,31 @@ class Converter:
             child_style = computed_style(node, sheet, style)
             if name in BLOCK_TAGS:
                 flush()
+                start = len(paras)
                 for c in node.children:
                     emit(c, child_style)
+                # the lines its <br>s split off share the paragraph's alignment,
+                # line spacing and left indent; the first line has its indent
+                # and the last its space after
+                lines = [p for p in paras[start:] if id(p) not in styled]
                 if current.runs:
-                    current.align = ALIGN_MAP.get(str(child_style.get("text-align", "")).lower())
-                    lh = to_px(child_style.get("line-height"), self.dpi)
-                    fs = to_px(child_style.get("font-size", "12pt"), self.dpi)
+                    lines.append(current)
+                styled.update(id(p) for p in lines)
+                align = ALIGN_MAP.get(str(child_style.get("text-align", "")).lower())
+                lh = to_px(child_style.get("line-height"), self.dpi)
+                fs = to_px(child_style.get("font-size", "12pt"), self.dpi)
+                ml = to_px(child_style.get("margin-left"), self.dpi)
+                for line in lines:
+                    line.align = align
                     if lh and fs:
-                        current.line_spacing = round(min(max(lh / fs, 0.5), 3.0), 3)
+                        line.line_spacing = round(min(max(lh / fs, 0.5), 3.0), 3)
+                    line.left_indent_pt = max(ml or 0.0, 0.0) * 72.0 / self.dpi
+                if lines:
+                    ti = to_px(child_style.get("text-indent"), self.dpi)
+                    lines[0].indent_pt = (ti or 0) * 72.0 / self.dpi
+                if current.runs:
                     mb = to_px(child_style.get("margin-bottom"), self.dpi)
                     current.space_after_pt = (mb or 0) * 72.0 / self.dpi
-                    ti = to_px(child_style.get("text-indent"), self.dpi)
-                    current.indent_pt = (ti or 0) * 72.0 / self.dpi
-                    ml = to_px(child_style.get("margin-left"), self.dpi)
-                    current.left_indent_pt = max(ml or 0.0, 0.0) * 72.0 / self.dpi
                 flush()
             else:
                 for c in node.children:
@@ -1421,10 +1433,16 @@ class Converter:
                         if not b.fixed:
                             b.y += dy
                     # Publisher hides a text box's overflow: whatever starts
-                    # below its bottom, and inline pictures too wide to fit
+                    # below its bottom, and inline pictures too wide to fit.
+                    # One that leads the frame, where stage 1 saw it laid out,
+                    # Publisher draws running past the frame's edge; further
+                    # down it draws them jumbled over the frame's other lines
                     bottom = cy + row_h[ri]
+                    first = min((b.y for b in placed), default=0.0)
                     kept = [b for b in placed
-                            if b.y < bottom - 1.0 and not (b.kind == "image" and b.w > cw + 2.0)]
+                            if b.y < bottom - 1.0
+                            and not (b.kind == "image" and b.w > cw + 2.0
+                                     and not (b.fixed and b.y <= first + 1.0))]
                     if len(kept) < len(placed):
                         self.warn(f"dropped {len(placed) - len(kept)} shape(s) in a text box's "
                                   f"overflow, which Publisher hides")
@@ -1591,6 +1609,14 @@ class Converter:
         frame edge, as Publisher lays out a line with inline pictures. Spaces
         keep their width, and the export's tab runs snap to tab stops.
         Returns the height used."""
+        def width(text, st, size_px, fam=None):
+            """text's width in px, in its run's font, weight and style"""
+            if fam is None:
+                fam = (st.get("font-family") or "").split(",")[0].strip().strip("'\"")
+            weight = str(st.get("font-weight") or "").lower()
+            bold = weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600)
+            italic = str(st.get("font-style") or "").lower() in ("italic", "oblique")
+            return text_width_px(text, fam, size_px, bold, italic)
         items: list = []
         self._inline_items(para, sheet, style, items)
         gap = INLINE_PICTURE_GAP_PT * self.dpi / 72.0
@@ -1613,16 +1639,23 @@ class Converter:
                     continue
                 after_space = text.endswith(" ")
                 size_px = to_px(st.get("font-size", "12pt"), self.dpi) or 16.0
-                fam = (st.get("font-family") or "").split(",")[0].strip().strip("'\"")
                 for i, piece in enumerate(_WS_RUN_RE.split(text)):
                     if piece:
                         measured.append(["space" if i % 2 else "text", piece, st,
-                                         text_width_px(piece, fam, size_px), size_px * 1.2])
+                                         width(piece, st, size_px), size_px * 1.2])
 
         # Publisher's own text for this line: real tabs and tab stops
-        rec, placed = self.pub_find(pub_key("".join(
-            OBJECT_CHAR if m[0] == "img" else (m[1] or "") for m in measured)), region)
-        pub_gaps, stops_px = None, []
+        key = pub_key("".join(
+            OBJECT_CHAR if m[0] == "img" else (m[1] or "") for m in measured))
+        rec, placed = self.pub_find(key, region)
+        if not placed and key.endswith(OBJECT_CHAR) and key.strip(OBJECT_CHAR):
+            # Publisher leaves pictures in the overflow out of its text
+            rec2, placed2 = self.pub_find(key.rstrip(OBJECT_CHAR), region)
+            if placed2:
+                rec, placed = rec2, placed2
+                while measured and measured[-1][0] in ("img", "space", "br"):
+                    measured.pop()
+        pub_gaps, stops_px, pub_breaks = None, [], None
         if rec:
             h_words = []
             for m in measured:
@@ -1635,6 +1668,18 @@ class Converter:
             p_words, p_gaps = pub_words_and_gaps(rec["text"])
             if p_words == h_words:
                 pub_gaps = p_gaps
+                # the words Publisher starts its lines with, so text measured
+                # without Publisher's own metrics breaks where Publisher's does
+                starts = rec.get("lineStarts") or []
+                if len(starts) > 1:
+                    ends, at = [], 0           # where each word ends
+                    for tok in _PUB_TOKEN_RE.split(rec["text"]):
+                        at += len(tok)
+                        if tok and not tok.isspace():
+                            ends.append(at)
+                    pub_breaks = {next(i for i, e in enumerate(ends) if e > s)
+                                  for s in starts[1:] if 0 < s < at and ends and ends[-1] > s}
+                    pub_breaks.discard(0)
             else:
                 placed = False
                 stops_px = sorted(t.get("pos", 0.0) * self.dpi / 72.0
@@ -1644,7 +1689,7 @@ class Converter:
         left_aligned = align not in ("center", "middle", "right")
         stop = TAB_STOP_PT * self.dpi / 72.0
         indent = to_px(style.get("text-indent"), self.dpi) or 0.0
-        lines, cur, pos = [], [], indent
+        lines, cur, pos, wi = [], [], indent, 0
         for m in measured:
             if m[0] == "br":
                 lines.append(cur)
@@ -1652,10 +1697,9 @@ class Converter:
                 continue
             if m[0] == "space":
                 size_px = m[4] / 1.2
-                fam = (m[2].get("font-family") or "").split(",")[0].strip().strip("'\"")
                 if pub_gaps is not None and m[5] in pub_gaps:
                     # Publisher's real whitespace: tabs go to their stops
-                    space_w = text_width_px(" ", fam, size_px)
+                    space_w = width(" ", m[2], size_px)
                     end = pos
                     for ch in pub_gaps[m[5]]:
                         if ch == "\t":
@@ -1664,9 +1708,62 @@ class Converter:
                             end += space_w
                     m[3] = end - pos
                 elif left_aligned and m[1].count("\xa0") >= 2:
-                    tabs = snap_to_tab(pos, m[3], text_width_px("\xa0", fam, size_px), stop)
+                    tabs = snap_to_tab(pos, m[3], width("\xa0", m[2], size_px), stop)
                     if tabs:
                         m[3] = (int(pos // stop) + tabs) * stop - pos
+            if pub_breaks is not None:
+                # break the lines where Publisher did
+                if m[0] == "img":
+                    if wi in pub_breaks and cur:
+                        lines.append(cur)
+                        cur, pos = [], 0.0
+                    wi += 1
+                elif m[0] == "text":
+                    size_px = m[4] / 1.2
+                    s = m[1]
+                    while True:
+                        cut = next((wd.start() for k, wd in enumerate(re.finditer(r"\S+", s))
+                                    if (k or cur) and wi + k in pub_breaks), None)
+                        if cut is None:
+                            break
+                        head = s[:cut]
+                        wi += len(head.split())
+                        if head.strip():
+                            cur.append(["text", head, m[2], width(head, m[2], size_px), m[4]])
+                        while cur and cur[-1][0] == "space":
+                            cur.pop()
+                        lines.append(cur)
+                        cur, pos = [], 0.0
+                        s = s[cut:]
+                    if s != m[1]:
+                        m = ["text", s, m[2], width(s, m[2], size_px), m[4]]
+                    wi += len(s.split())
+                elif m[0] == "space" and not cur:
+                    continue
+                cur.append(m)
+                pos += m[3]
+                continue
+            while m[0] == "text" and pos + m[3] > w + 0.5 and " " in m[1].strip(" "):
+                # too long for the line: break it between words, as Publisher does
+                words = m[1].split(" ")
+                size_px = m[4] / 1.2
+                n = len(words) - 1
+                while n > 0 and pos + width(" ".join(words[:n]), m[2], size_px) > w + 0.5:
+                    n -= 1
+                if n == 0 or not " ".join(words[:n]).strip():
+                    if not cur:
+                        break
+                    lines.append(cur)
+                    cur, pos = [], 0.0
+                    m = [m[0], m[1].lstrip(" "), m[2],
+                         width(m[1].lstrip(" "), m[2], size_px), m[4]]
+                    continue
+                head = " ".join(words[:n]) + " "
+                tail = " ".join(words[n:]).lstrip(" ")
+                cur.append(["text", head, m[2], width(head, m[2], size_px), m[4]])
+                lines.append(cur)
+                cur, pos = [], 0.0
+                m = ["text", tail, m[2], width(tail, m[2], size_px), m[4]]
             if cur and pos + m[3] > w + 0.5:
                 lines.append(cur)
                 cur, pos = [], 0.0
@@ -1711,9 +1808,9 @@ class Converter:
                     run = self._make_run(payload.strip(), st)
                     size_px = ih / 1.2
                     fam = run.font if run else None
-                    skip = text_width_px(payload[:len(payload) - len(payload.lstrip())],
-                                         fam, size_px)
-                    vis = text_width_px(payload.strip(), fam, size_px)
+                    skip = width(payload[:len(payload) - len(payload.lstrip())],
+                                 st, size_px, fam)
+                    vis = width(payload.strip(), st, size_px, fam)
                     self.order += 1
                     # slack so PowerPoint's own metrics don't wrap the text
                     boxes.append(Box(kind="text", x=cx + skip, y=top + content_h - ih,
