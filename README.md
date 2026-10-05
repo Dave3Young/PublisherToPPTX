@@ -8,9 +8,13 @@ The conversion runs in two stages:
 
 | Script | Stage |
 | --- | --- |
-| `PublisherPubToHTMLPNGfilesFinal.ps1` | 1: has Publisher save each `.pub` as filtered HTML and export its pictures as 300 dpi PNGs, and records the page size and each paragraph's text, formatting and position |
+| `PublisherPubToHtmlForPptx.ps1` | 1: has Publisher save each `.pub` as filtered HTML and export its pictures as 300 dpi PNGs, and records the page size and each paragraph's text, formatting and position |
 | `PublisherHtmlToPptx.ps1` | 2: finds Python, installs the packages it needs, and runs `pubhtml2pptx.py` |
 | `pubhtml2pptx.py` | 2: rebuilds each page of the HTML export as a slide |
+
+Use this repository's stage 1 script, not `PublisherPubToHTMLPNGfilesFinal.ps1` from
+[Publisher_Exports](https://github.com/Dave3Young/Publisher_Exports). That script does not
+record the page size or the text layout files that stage 2 needs to match Publisher's layout.
 
 ## Requirements
 - Windows 10/11 with Windows PowerShell 5.1. Stage 2 also runs in PowerShell 7.
@@ -23,8 +27,8 @@ The conversion runs in two stages:
 ```powershell
 # Stage 1: run in the folder holding the .pub files.
 # Each MyFlyer.pub gets a MyFlyer\ export folder beside it.
-.\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub"
-.\PublisherPubToHTMLPNGfilesFinal.ps1 -Filter "*.pub" -Recurse
+.\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub"
+.\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub" -Recurse
 
 # Stage 2, one export folder: writes MyFlyer\MyFlyer.pptx
 .\PublisherHtmlToPptx.ps1 -Path .\MyFlyer
