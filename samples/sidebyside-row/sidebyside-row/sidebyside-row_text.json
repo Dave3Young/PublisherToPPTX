@@ -9,6 +9,7 @@
                        "top":  72,
                        "width":  468,
                        "height":  40,
+                       "type":  17,
                        "valign":  0,
                        "margins":  [
                                        2.880000114440918,
@@ -24,6 +25,15 @@
                                               "lineTops":  [
                                                                74.8125228881836
                                                            ],
+                                              "lineStarts":  [
+                                                                 0
+                                                             ],
+                                              "lineLefts":  [
+                                                                74.8125228881836
+                                                            ],
+                                              "lineWidths":  [
+                                                                 356.25
+                                                             ],
                                               "text":  "Three images in a row: A, B, C from left to right.",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -39,7 +49,8 @@
 
                                                        ]
                                           }
-                                      ]
+                                      ],
+                       "overflowing":  false
                    }
                ]
 }
