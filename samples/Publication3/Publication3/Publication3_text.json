@@ -1,0 +1,618 @@
+{
+    "version":  1,
+    "units":  "pt",
+    "shapes":  [
+                   {
+                       "page":  1,
+                       "name":  "Control 2",
+                       "left":  24.9375,
+                       "top":  23.1865234375,
+                       "width":  286.87496948242188,
+                       "height":  750.81329345703125,
+                       "cells":  [
+                                     {
+                                         "row":  1,
+                                         "col":  1,
+                                         "valign":  0,
+                                         "margins":  [
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918,
+                                                         2.880000114440918
+                                                     ],
+                                         "paragraphs":  [
+                                                            {
+                                                                "top":  26.062519073486328,
+                                                                "left":  27.75,
+                                                                "height":  20.437480926513672,
+                                                                "lineTops":  [
+                                                                                 26.062519073486328
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   108.18756103515625
+                                                                               ],
+                                                                "text":  "New Website Menu",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Tahoma",
+                                                                "size":  12,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  66.375038146972656,
+                                                                "left":  27.75,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 66.375038146972656
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   208.68756103515625
+                                                                               ],
+                                                                "text":  "1) WordPress Theme that you select",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  86.43756103515625,
+                                                                "left":  27.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 86.43756103515625
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   281.06253051757813
+                                                                               ],
+                                                                "text":  "From https://wordpress.org/themes/ or a Vendor",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  106.5,
+                                                                "left":  27.75,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 106.5
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   251.25
+                                                                               ],
+                                                                "text":  "Cost of Themes range from free to $100+   ",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  126.37503814697266,
+                                                                "left":  142.31251525878906,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 126.37503814697266
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  142.31251525878906
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   169.31251525878906
+                                                                               ],
+                                                                "text":  "                                  $____  ",
+                                                                "align":  2,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  146.43756103515625,
+                                                                "left":  27.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 146.43756103515625
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   182.81251525878906
+                                                                               ],
+                                                                "text":  "2) Selection of Hosting Provider",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  166.5,
+                                                                "left":  27.75,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 166.5
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   192.56251525878906
+                                                                               ],
+                                                                "text":  "Choose one of the options below:",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  206.43756103515625,
+                                                                "left":  27.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 206.43756103515625
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   100.5
+                                                                               ],
+                                                                "text":  "  Wordpress.com",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  226.5,
+                                                                "left":  27.75,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 226.5
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   198
+                                                                               ],
+                                                                "text":  "    ($5 monthly fee billable to you)",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  246.37504577636719,
+                                                                "left":  27.75,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 246.37504577636719
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   283.87503051757813
+                                                                               ],
+                                                                "text":  "Our Installation Cost                                   $150",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  286.5,
+                                                                "left":  27.75,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 286.5
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   86.625038146972656
+                                                                               ],
+                                                                "text":  "   Bigrock.com",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  306.37503051757813,
+                                                                "left":  27.75,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 306.37503051757813
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   196.87504577636719
+                                                                               ],
+                                                                "text":  "    ($30 annual fee billable to you)",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  326.43756103515625,
+                                                                "left":  27.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 326.43756103515625
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   283.87503051757813
+                                                                               ],
+                                                                "text":  "Our Installation Cost                                   $150",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  366.56253051757813,
+                                                                "left":  27.75,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 366.56253051757813
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   97.875038146972656
+                                                                               ],
+                                                                "text":  "    AWS Lightsail",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  386.43756103515625,
+                                                                "left":  27.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 386.43756103515625
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   225
+                                                                               ],
+                                                                "text":  "    ($5 monthly fee billable to you)       ",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  406.5,
+                                                                "left":  27.75,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 406.5
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   283.87503051757813
+                                                                               ],
+                                                                "text":  "Our Installation Cost                                   $300",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  446.43756103515625,
+                                                                "left":  27.75,
+                                                                "height":  20.062440872192383,
+                                                                "lineTops":  [
+                                                                                 446.43756103515625
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   103.12503814697266
+                                                                               ],
+                                                                "text":  "    Other Provider",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  466.5,
+                                                                "left":  27.75,
+                                                                "height":  20.062519073486328,
+                                                                "lineTops":  [
+                                                                                 466.5
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   197.06251525878906
+                                                                               ],
+                                                                "text":  "    ($? monthly fee billable to you)",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            },
+                                                            {
+                                                                "top":  486.56253051757813,
+                                                                "left":  27.75,
+                                                                "height":  19.875040054321289,
+                                                                "lineTops":  [
+                                                                                 486.56253051757813
+                                                                             ],
+                                                                "lineStarts":  [
+                                                                                   0
+                                                                               ],
+                                                                "lineLefts":  [
+                                                                                  27.75
+                                                                              ],
+                                                                "lineWidths":  [
+                                                                                   283.87503051757813
+                                                                               ],
+                                                                "text":  "Our Installation Cost                                   $150",
+                                                                "align":  0,
+                                                                "firstIndent":  0,
+                                                                "leftIndent":  0,
+                                                                "rightIndent":  0,
+                                                                "spaceBefore":  0,
+                                                                "spaceAfter":  6,
+                                                                "lineSpacing":  1.190000057220459,
+                                                                "lineRule":  5,
+                                                                "font":  "Verdana",
+                                                                "size":  11,
+                                                                "tabs":  [
+
+                                                                         ]
+                                                            }
+                                                        ]
+                                     }
+                                 ]
+                   }
+               ]
+}
