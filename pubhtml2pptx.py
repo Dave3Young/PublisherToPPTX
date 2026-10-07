@@ -383,6 +383,7 @@ class Para:
     pub: Optional[dict] = None        # stage 1's record for this paragraph
     pub_placed: bool = False          # pub was found at this paragraph's place
     exact_line_pt: Optional[float] = None
+    line_multiple: Optional[float] = None   # PowerPoint's, for lines of mixed sizes
 
     def text(self) -> str:
         return "".join(r.text for r in self.runs)
@@ -1245,11 +1246,13 @@ class Converter:
                 rec, placed = self.pub_find(pub_key(p.text()[bullet.end():]), region)
                 if rec:
                     bullet_runs = _drop_prefix(p.runs, bullet.end())
-            if rec is None and region is not None:
+            if not placed and region is not None:
                 # a paragraph running into the overflow: Publisher's text is
-                # only its visible start, so keep just that
-                rec, placed = self.pub_find_start(pub_key(p.text()), region)
-                if rec:
+                # only its visible start, so keep just that (the whole text
+                # may be another frame's, elsewhere)
+                start, at = self.pub_find_start(pub_key(p.text()), region)
+                if start:
+                    rec, placed = start, at
                     _keep_key_chars(p.runs, len(pub_key(rec["text"])))
             if rec and apply_pub_whitespace(p.runs, rec["text"]):
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
@@ -1428,6 +1431,20 @@ class Converter:
                 return None
             # how far PowerPoint would put this paragraph's text below Publisher's
             multiple = pub_line_multiple(rec) if rec.get("lineRule") in (0, 1, 2, 5) else None
+            p.line_multiple = None
+            line_sizes = _line_size_list(p) if p.keep_lines and multiple else []
+            # (no gap measures the last line, so its size must be one the
+            # others show)
+            if (len(tops) >= 2 and len(line_sizes) == len(tops) and None not in line_sizes
+                    and len(set(line_sizes[:-1])) > 1 and line_sizes[-1] in line_sizes[:-1]):
+                # lines of different sizes, each as tall as its largest text:
+                # a multiple in PowerPoint too, which spaces lines the same way
+                pitches = [(b - a, 1.2 * s) for a, b, s in zip(tops, tops[1:], line_sizes)]
+                fit = sum(g for g, _ in pitches) / sum(s for _, s in pitches)
+                if all(abs(g - fit * s) <= 0.6 for g, s in pitches):
+                    p.line_multiple = fit
+                    # the last line's height, for the space after it
+                    line = fit * 1.2 * line_sizes[-1]
             lift = PPT_EXTRA_ABOVE * line * (1.0 - 1.0 / multiple) if multiple and multiple > 1 else 0.0
             sizes = [r.size_pt for r in p.runs if r.size_pt and r.text]
             if rec.get("lineRule") == 3 and sizes:
@@ -2772,16 +2789,21 @@ def px_to_emu(px: float, dpi: float) -> int:
 def _line_sizes(para) -> set:
     """The largest font size on each line of a paragraph, spaces included;
     None for a run with no size."""
-    sizes, line = set(), []
+    return set(_line_size_list(para))
+
+
+def _line_size_list(para) -> list:
+    """_line_sizes, line by line in order."""
+    sizes, line = [], []
     for run in para.runs:
         for k, piece in enumerate(run.text.split("\v")):
             if k and line:
-                sizes.add(max(line, key=lambda s: s or 0.0) if None not in line else None)
+                sizes.append(max(line, key=lambda s: s or 0.0) if None not in line else None)
                 line = []
             if piece:
                 line.append(run.size_pt)
     if line:
-        sizes.add(max(line, key=lambda s: s or 0.0) if None not in line else None)
+        sizes.append(max(line, key=lambda s: s or 0.0) if None not in line else None)
     return sizes
 
 
@@ -2890,7 +2912,9 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
             if para.align is not None:
                 p.alignment = para.align
             sizes = _line_sizes(para)
-            if para.exact_line_pt and len(sizes) == 1 and None not in sizes:
+            if para.line_multiple:
+                p.line_spacing = para.line_multiple
+            elif para.exact_line_pt and len(sizes) == 1 and None not in sizes:
                 # a multiple isn't rounded: PowerPoint's single spacing is
                 # 1.2 times the largest font size on the line, whatever the font
                 p.line_spacing = para.exact_line_pt / (1.2 * sizes.pop())
