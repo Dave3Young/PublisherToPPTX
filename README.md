@@ -44,6 +44,7 @@ In Canva, choose **Create a design > Import file**, or drag the `.pptx` onto the
 | --- | --- | --- |
 | `-Filter` | (required) | The `.pub` files to convert, such as `"*.pub"` or `"MyFlyer.pub"`. |
 | `-Recurse` | | Also convert `.pub` files in subfolders. |
+| `-RefreshTextLayout` | | Rewrite `<name>_text.json` even if it exists. |
 
 These settings are at the top of the script:
 
@@ -74,13 +75,14 @@ Publisher's HTML export loses some layout, so stage 1 also asks Publisher for it
 | File | Holds | Stage 2 uses it to |
 | --- | --- | --- |
 | `<name>_pagesize.txt` | The page width and height in inches. | Size the slides. The export sizes its page to the content, sometimes with a broken height. |
-| `<name>_text.json` | Every paragraph's real text (with its tabs), alignment, indents, spacing, line-spacing rule, font, tab stops, where Publisher puts it on the page, and where each of its lines starts. | Put tabs and tab stops back exactly, place each paragraph, and each line of inline pictures, where Publisher does, and break lines where Publisher breaks them. |
+| `<name>_text.json` | Every paragraph's real text (with its tabs), alignment, indents, spacing, line-spacing rule, font, tab stops, where Publisher puts it on the page, and where each of its lines starts. Also each text box placed in another's text, with where Publisher puts it. | Put tabs and tab stops back exactly, place each paragraph, each line of inline pictures and each inline text box where Publisher does, and break lines where Publisher breaks them. |
 
 Stage 2 matches a paragraph in the HTML to `_text.json` by its words and, for repeated text,
 by its position. Exports made before these files existed still convert, using estimates.
-Stage 1 doesn't rewrite an existing `_text.json`. A `_text.json` written before stage 1
-recorded line starts converts with the text wrapping freely; to get Publisher's line breaks,
-move the old file aside and run stage 1 again.
+Stage 1 doesn't rewrite an existing `_text.json` unless run with `-RefreshTextLayout`.
+A `_text.json` written before stage 1 recorded line starts converts with the text wrapping
+freely, and one written before it recorded inline text boxes puts them where the HTML export
+puts their pictures; run stage 1 with `-RefreshTextLayout` to fix either.
 
 ## What gets converted
 | Publisher content | In the `.pptx` |
@@ -94,6 +96,7 @@ move the old file aside and run stage 1 again.
 | Filled box | A filled rectangle. |
 | Table | A rectangle for each cell's fill and for each cell border, plus a text box for each cell's text. Cell content is centred vertically unless the cell says otherwise, as in Publisher. |
 | Pictures in a line of text | Placed side by side as in Publisher, with the spaces and tabs between them kept. Any words in the line become small text boxes beside the pictures. |
+| Text box in a line of text | Publisher exports it as a picture of the text. Stage 2 rebuilds it as an editable text box from the copy Publisher keeps in the HTML's VML markup, with its fill and outline, where stage 1 saw Publisher put it, and with Publisher's line breaks. One wider than its frame runs past the frame's edge, as in Publisher. Text boxes inside it are rebuilt the same way. One that Publisher hides, in a text box's overflow for instance, is left out, with a warning. With a `_text.json` written before stage 1 recorded inline text boxes, or none, it goes where the export puts the picture. |
 | Scratch area | Pictures and text left off the page never reach the HTML export, so they go on extra slides at the end. Turn these off with `-NoExtras`. |
 
 BMP, TIFF, WMF, EMF, WebP and ICO images are converted to PNG in an `_pptx_converted`
