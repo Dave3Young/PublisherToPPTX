@@ -2841,7 +2841,9 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                 p._p.get_or_add_pPr().set("indent", str(int(Pt(
                     max(min(para.indent_pt, 144), -para.left_indent_pt)))))
             if para.space_after_pt or carry:
-                want = min(para.space_after_pt, 48) + carry
+                # the HTML's margins can be wild, but a gap Publisher placed
+                # is real, up to PowerPoint's limit of 1584pt
+                want = min(para.space_after_pt, 1584 if para.pub_placed else 48) + carry
                 after = max(round(want), 0)
                 carry = want - after
                 if after:
