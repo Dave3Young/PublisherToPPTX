@@ -293,7 +293,12 @@ function Get-PublisherParagraphs
     param
     (
         [Parameter(Mandatory = $true)]
-        $TextRange
+        $TextRange,
+
+        # Lines report no real top, as in an inline text box: follow
+        # them by their starts alone
+        [switch]
+        $NoLineTops
     )
 
     $paragraphs = New-Object System.Collections.Generic.List[object]
@@ -358,7 +363,8 @@ function Get-PublisherParagraphs
                     if ($line.Length -eq 0 -or
                         $line.Start -ge $paraEnd -or
                         $line.Start -le $prevStart -or
-                        ($lineTops.Count -gt 0 -and $lineTop -le $lineTops[$lineTops.Count - 1])) {
+                        (-not $NoLineTops -and $lineTops.Count -gt 0 -and
+                         $lineTop -le $lineTops[$lineTops.Count - 1])) {
                         break
                     }
 
@@ -496,26 +502,173 @@ function Add-PublisherTextLayout
 
             if ($textRange -and $textRange.Length -gt 0) {
 
-                $frame = $shape.TextFrame
-
-                # pbTextFrame (17) or a shape with text, such as an autoshape
-                $record.type = [int]$shape.Type
-                $record.valign = [int]$frame.VerticalTextAlignment
-                $record.margins = @([double]$frame.MarginLeft, [double]$frame.MarginTop,
-                                    [double]$frame.MarginRight, [double]$frame.MarginBottom)
-                $record.paragraphs = (Get-PublisherParagraphs -TextRange $textRange)
-
-                # Text that doesn't fit is hidden; the export still writes it.
-                $overflowing = $false
-                try { $overflowing = [bool]$frame.Overflowing } catch { }
-                $record.overflowing = $overflowing
-
+                Add-PublisherTextFrameFields -Record $record -Shape $shape -TextRange $textRange
                 $Records.Add($record)
+
+                Add-PublisherInlineTextLayout `
+                    -TextRange $textRange `
+                    -PageNumber $PageNumber `
+                    -Parent $record.name `
+                    -Records $Records
             }
         }
         catch {
 
             Write-Warning "Unable to read text layout of a shape on page $PageNumber."
+            Write-Warning $_
+        }
+    }
+}
+
+function Add-PublisherTextFrameFields
+{
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        $Record,
+
+        [Parameter(Mandatory = $true)]
+        $Shape,
+
+        [Parameter(Mandatory = $true)]
+        $TextRange,
+
+        [switch]
+        $NoLineTops
+    )
+
+    $frame = $Shape.TextFrame
+
+    # pbTextFrame (17) or a shape with text, such as an autoshape
+    $Record.type = [int]$Shape.Type
+    $Record.valign = [int]$frame.VerticalTextAlignment
+    $Record.margins = @([double]$frame.MarginLeft, [double]$frame.MarginTop,
+                        [double]$frame.MarginRight, [double]$frame.MarginBottom)
+    $Record.paragraphs = (Get-PublisherParagraphs -TextRange $TextRange -NoLineTops:$NoLineTops)
+
+    # Text that doesn't fit is hidden; the export still writes it.
+    $overflowing = $false
+    try { $overflowing = [bool]$frame.Overflowing } catch { }
+    $Record.overflowing = $overflowing
+}
+
+# A text box placed in another text box's text, which the HTML export
+# writes only as a picture. Records it like any text frame, with
+# inline = true and the name of the frame holding it, so stage 2 can
+# rebuild it as text where Publisher puts it.
+function Add-PublisherInlineTextLayout
+{
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        $TextRange,
+
+        [Parameter(Mandatory = $true)]
+        [int]
+        $PageNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]
+        $Parent,
+
+        [Parameter(Mandatory = $true)]
+        $Records,
+
+        # What moves the holding frame's own positions onto the page,
+        # when it is an inline text box itself
+        [double]
+        $ShiftX = 0,
+
+        [double]
+        $ShiftY = 0
+    )
+
+    $inlineShapes = $null
+    try { $inlineShapes = $TextRange.InlineShapes } catch { }
+
+    if (-not $inlineShapes -or $inlineShapes.Count -eq 0) {
+        return
+    }
+
+    for ($k = 1; $k -le $inlineShapes.Count; $k++) {
+
+        try {
+
+            $shape = $inlineShapes.Item($k)
+
+            $innerRange = $null
+            try {
+                if ($shape.HasTextFrame -eq -1) {
+                    $innerRange = $shape.TextFrame.TextRange
+                }
+            }
+            catch { }
+
+            if (-not $innerRange -or $innerRange.Length -eq 0) {
+                continue
+            }
+
+            $left = [double]$shape.Left + $ShiftX
+            $top = [double]$shape.Top + $ShiftY
+
+            # Off the active page, an inline shape reports a position
+            # thousands of points off the page.
+            if ([math]::Abs($left) -gt 5000 -or [math]::Abs($top) -gt 5000) {
+                continue
+            }
+
+            $record = [ordered]@{
+                page   = $PageNumber
+                name   = [string]$shape.Name
+                left   = $left
+                top    = $top
+                width  = [double]$shape.Width
+                height = [double]$shape.Height
+                inline = $true
+                parent = $Parent
+            }
+
+            Add-PublisherTextFrameFields -Record $record -Shape $shape -TextRange $innerRange -NoLineTops
+
+            # Publisher reports every paragraph and line of an inline text
+            # box's own text at one point far off the page, though their
+            # line starts are right. Keep only the starts, so stage 2 breaks
+            # lines where Publisher does and flows the text from the box's
+            # top. A text box inside this one reports its position from that
+            # same point, standing for this box's top left corner.
+            $dx = 0.0
+            $dy = 0.0
+            $first = @($record.paragraphs | Where-Object { $null -ne $_.top -and $null -ne $_.left })
+
+            if ($first.Count -gt 0 -and [math]::Abs($first[0].top) -gt 5000) {
+
+                $dx = $left - $first[0].left
+                $dy = $top - $first[0].top
+            }
+
+            foreach ($p in $record.paragraphs) {
+
+                $p.top = $null
+                $p.left = $null
+                $p.height = $null
+                $p.lineTops.Clear()
+                $p.lineLefts.Clear()
+                $p.lineWidths.Clear()
+            }
+
+            $Records.Add($record)
+
+            Add-PublisherInlineTextLayout `
+                -TextRange $innerRange `
+                -PageNumber $PageNumber `
+                -Parent $record.name `
+                -Records $Records `
+                -ShiftX $dx `
+                -ShiftY $dy
+        }
+        catch {
+
+            Write-Warning "Unable to read text layout of an inline text box on page $PageNumber."
             Write-Warning $_
         }
     }
@@ -1226,6 +1379,14 @@ try {
 
                     for ($pageNumber = 1; $pageNumber -le $doc.Pages.Count; $pageNumber++) {
 
+                        # Inline text boxes report their position only on
+                        # the active page.
+                        try {
+                            $doc.ActiveView.ActivePage = $doc.Pages.Item($pageNumber)
+                            $doc.ActiveView.Zoom = 400
+                        }
+                        catch { }
+
                         Add-PublisherTextLayout `
                             -Shapes $doc.Pages.Item($pageNumber).Shapes `
                             -PageNumber $pageNumber `
@@ -1240,8 +1401,9 @@ try {
                             -Records $layoutRecords
                     }
 
+                    # version 2 records inline text boxes
                     $layout = [ordered]@{
-                        version = 1
+                        version = 2
                         units   = "pt"
                         shapes  = $layoutRecords
                     }

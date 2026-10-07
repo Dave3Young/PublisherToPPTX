@@ -58,6 +58,7 @@ import json
 import math
 import os
 import re
+import struct
 import sys
 import glob as globmod
 import dataclasses
@@ -570,7 +571,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
         return {}
     index: dict = {}
 
-    def add(par, page, frame=None, last=False):
+    def add(par, page, frame=None, last=False, box=None):
         lines = re.split("[\v\n]", str(par.get("text", "")))
         tops = sorted(set(par.get("lineTops") or []))
         # each line on a row of its own: its row's top places it
@@ -591,7 +592,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             size = len(line.encode("utf-16-le")) // 2
             key = pub_key(line)
             if key:
-                rec = {**par, "text": line, "page": page, "frame": frame,
+                rec = {**par, "text": line, "page": page, "frame": frame, "box": box,
                        "firstIndent": par.get("firstIndent", 0) if i == 0 else 0,
                        # the last text the frame shows; the rest is overflow
                        "overflowAfter": last and i + 1 == len(lines)}
@@ -629,8 +630,11 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             page = 0
         pars = shape.get("paragraphs") or []
         frame = _pub_text_area(shape, pars)
+        # an inline text box's paragraphs have no position: they're found by
+        # the box they're in
+        box = f"{page}/{shape.get('name')}" if shape.get("inline") else None
         for n, par in enumerate(pars):
-            add(par, page, frame, bool(shape.get("overflowing")) and n + 1 == len(pars))
+            add(par, page, frame, bool(shape.get("overflowing")) and n + 1 == len(pars), box)
         for cell in shape.get("cells") or []:
             for par in cell.get("paragraphs") or []:
                 add(par, page)
@@ -681,6 +685,36 @@ def load_pub_frames(export_dir: str, base: str) -> list:
         except (KeyError, TypeError, ValueError):
             continue
     return frames
+
+
+def load_pub_inline(export_dir: str, base: str) -> Optional[list]:
+    """Stage 1's inline text boxes: where Publisher puts each one, in pt, with
+    its text's pub_key (inline pictures left out) to match the HTML's copy,
+    and whether its text overflows it. None if stage 1 didn't record them
+    (layout files before version 2)."""
+    path = os.path.join(export_dir, base + "_text.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data.get("version"), int) or data["version"] < 2:
+        return None
+    boxes = []
+    for shape in data.get("shapes", []):
+        if not shape.get("inline"):
+            continue
+        text = "".join(str(par.get("text", "")) for par in shape.get("paragraphs") or [])
+        try:
+            boxes.append({"page": int(shape.get("page", 0)),
+                          "box": f"{int(shape.get('page', 0))}/{shape.get('name')}",
+                          "key": pub_key(text).replace(OBJECT_CHAR, ""),
+                          "left": float(shape["left"]), "top": float(shape["top"]),
+                          "width": float(shape["width"]), "height": float(shape["height"]),
+                          "overflowing": bool(shape.get("overflowing"))})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return boxes
 
 
 def pub_words_and_gaps(text: str):
@@ -988,6 +1022,50 @@ def text_width_px(text: str, family: Optional[str], size_px: float,
     return (spaces * 0.28 + (len(text) - spaces) * 0.5) * size_px
 
 
+_spacing_cache: dict = {}
+
+
+def pub_single_spacing(family: Optional[str], bold: bool = False,
+                       italic: bool = False) -> Optional[float]:
+    """Publisher's single line spacing for a font, as a multiple of its size:
+    the line height its OS/2 table gives (ascender, descender and line gap),
+    or for a font whose OS/2 table is older than version 2, its hhea table.
+    PowerPoint's single spacing is 1.2 times the size for every font. None
+    if the font file can't be read."""
+    name = (font_name(family) or "").lower()
+    style = " ".join(s for s, on in (("bold", bold), ("italic", italic)) if on)
+    key = (name, style)
+    if key in _spacing_cache:
+        return _spacing_cache[key]
+    ratio = None
+    fname = ((installed_fonts().get(f"{name} {style}") if style else None)
+             or FONT_FILES.get(name) or installed_fonts().get(name))
+    if fname:
+        path = fname if os.path.isabs(fname) else os.path.join(
+            os.environ.get("WINDIR", r"C:\Windows"), "Fonts", fname)
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+            # the first font of a collection
+            off = struct.unpack(">I", data[12:16])[0] if data[:4] == b"ttcf" else 0
+            tables = {}
+            for i in range(struct.unpack(">H", data[off + 4:off + 6])[0]):
+                tag, _, at, _ = struct.unpack(">4sIII", data[off + 12 + 16 * i:off + 28 + 16 * i])
+                tables[tag] = at
+            upm = struct.unpack(">H", data[tables[b"head"] + 18:tables[b"head"] + 20])[0]
+            os2 = tables[b"OS/2"]
+            if struct.unpack(">H", data[os2:os2 + 2])[0] >= 2:
+                asc, desc, gap = struct.unpack(">hhh", data[os2 + 68:os2 + 74])
+            else:
+                hhea = tables[b"hhea"]
+                asc, desc, gap = struct.unpack(">hhh", data[hhea + 4:hhea + 10])
+            ratio = (asc - desc + gap) / upm or None
+        except (OSError, KeyError, struct.error, ZeroDivisionError):
+            ratio = None
+    _spacing_cache[key] = ratio
+    return ratio
+
+
 def is_positioned(style: dict) -> bool:
     return style.get("position", "static").lower() in ("absolute", "relative", "fixed")
 
@@ -1013,6 +1091,11 @@ class Converter:
         self.pub_blank_frames: list = []
         self.hide_text = 0                # inside such a frame: no paragraphs
         self.page = 1
+        # inline text boxes rebuilt from the VML, by their picture's x-textbox,
+        # and where stage 1 saw Publisher put them
+        self.inline_boxes: dict = {}
+        self.pub_inline: Optional[list] = None
+        self.pub_box = None               # the inline text box being placed
 
     # -- runs and paragraphs ------------------------------------------------
 
@@ -1175,6 +1258,11 @@ class Converter:
         recs = self.pub_text.get(key)
         if not recs:
             return None, False
+        if self.pub_box is not None:
+            for rec in recs:
+                if rec.get("box") == self.pub_box and id(rec) not in self.pub_claimed:
+                    self.pub_claimed.add(id(rec))
+                    return rec, False
         if region is not None:
             x0, y0, x1, y1 = region
             tol = 3.0
@@ -1603,6 +1691,94 @@ class Converter:
                 continue
             self._inline_items(child, sheet, cs, out)
 
+    def _inline_text_box(self, img: Tag, sheet: StyleSheet, x, y, w, h,
+                         boxes: list, fixed: bool) -> bool:
+        """Places the text box an inline picture is of (see
+        restore_vml_inline_text_boxes) as editable text, where stage 1 saw
+        Publisher put it, else at the picture's own place (px). One wider
+        than its frame runs past the frame's edge. Returns False if the
+        picture isn't of a text box."""
+        div = self.inline_boxes.get(img.get("x-textbox") or "")
+        if div is None:
+            return False
+        key = pub_key(div.get_text())
+        k = self.dpi / 72.0
+        best = None
+        for rec in self.pub_inline or []:
+            if id(rec) in self.pub_claimed or rec["page"] not in (0, self.page):
+                continue
+            # the export can mangle characters the box's text ends with
+            if rec["key"] != key and (len(key) < 12 or rec["key"][:20] != key[:20]):
+                continue
+            d = abs(rec["left"] * k - x) + abs(rec["top"] * k - y)
+            if best is None or d < best[0]:
+                best = (d, rec)
+        rec = None
+        if best:
+            rec = best[1]
+            self.pub_claimed.add(id(rec))
+            x, y, w, h = rec["left"] * k, rec["top"] * k, rec["width"] * k, rec["height"] * k
+            fixed = True
+        elif self.pub_inline is not None:
+            # stage 1 lists every inline text box Publisher shows
+            self.warn(f"dropped an inline text box Publisher hides: {div.get_text(' ', strip=True)[:40]!r}")
+            return True
+        first = len(boxes)
+        style = computed_style(div, sheet, {})
+        outer, self.pub_box = self.pub_box, rec["box"] if rec else None
+        self._emit_node(div, sheet, style, (x, y), w, h, boxes, set())
+        self.pub_box = outer
+        for b in boxes[first:]:
+            b.fixed = b.fixed or fixed
+            if b.kind != "text" or not b.paras:
+                continue
+            # without Publisher's positions, its space before each paragraph:
+            # above the first, it moves the text down; it adds to the space
+            # after the paragraph before the others
+            for i, p in enumerate(b.paras):
+                prec = p.pub if not p.pub_placed else None
+                if not prec:
+                    continue
+                # Publisher's line spacing, which PowerPoint's single
+                # spacing doesn't match
+                multiple = pub_line_multiple(prec)
+                sized = [r for r in p.runs if r.text.strip() and r.size_pt]
+                if multiple and sized:
+                    big = max(sized, key=lambda r: r.size_pt)
+                    ratio = pub_single_spacing(big.font, big.bold, big.italic)
+                    if ratio:
+                        p.exact_line_pt = ratio * big.size_pt * multiple
+                before = float(prec.get("spaceBefore") or 0.0)
+                if before <= 0:
+                    continue
+                if i == 0:
+                    b.y += before * k
+                    b.h = max(b.h - before * k, 8.0)
+                else:
+                    b.paras[i - 1].space_after_pt += before
+        if rec and rec["overflowing"]:
+            # Publisher hides the paragraphs starting below the box. Stage 1
+            # can't say where they are, so count their lines down from the top.
+            bottom = y + h - (to_px(style.get("padding-bottom"), self.dpi) or 0.0)
+            for b in boxes[first:]:
+                if b.kind != "text":
+                    continue
+                at = b.y
+                for i, p in enumerate(b.paras):
+                    if at >= bottom - 1.0 and any(q.text().strip() for q in b.paras[i:]):
+                        self.warn(f"dropped {len(b.paras) - i} paragraph(s) in a text box's "
+                                  f"overflow, which Publisher hides: {p.text()[:40]!r}")
+                        del b.paras[i:]
+                        break
+                    if p.keep_lines:
+                        size_px = max((r.size_pt or 12.0) for r in p.runs) * k
+                        line = p.exact_line_pt * k if p.exact_line_pt else \
+                            size_px * (p.line_spacing or 1.2)
+                        at += (p.text().count("\v") + 1) * line + p.space_after_pt * k
+                    else:
+                        at += self.estimate_height([p], b.w)
+        return True
+
     def _line_boxes(self, para: Tag, sheet: StyleSheet, style: dict,
                     x, y, w, h, boxes: list, region=None) -> float:
         """Places a paragraph's pictures and text left to right, wrapping at the
@@ -1795,7 +1971,11 @@ class Converter:
             extra = content_h * (spacing - 1.0)
             top = cy if placed else cy + extra / 2
             for kind, payload, st, iw, ih, *_ in line:
-                if kind == "img":
+                if kind == "img" and self._inline_text_box(
+                        payload, sheet, cx + gap, top + content_h - ih + gap,
+                        iw - 2 * gap, ih - 2 * gap, boxes, placed):
+                    pass
+                elif kind == "img":
                     src = unquote(payload.get("src") or "")
                     if src:
                         self.order += 1
@@ -1998,7 +2178,9 @@ class Converter:
                 iw = iw or content_w
                 ih = ih or (iw * 0.75)
                 src = unquote(payload.get("src") or "")
-                if src:
+                if self._inline_text_box(payload, sheet, ix, iy, iw, ih, boxes, False):
+                    pass
+                elif src:
                     self.order += 1
                     boxes.append(Box(kind="image", x=ix, y=iy, w=iw, h=ih, src=src,
                                      order=self.order, note=payload.get("alt") or ""))
@@ -2188,14 +2370,66 @@ def restore_vml_pictures(soup: BeautifulSoup) -> int:
     return count
 
 
+def _vml_box_styles(shape: Tag, decl: dict, box: Tag, outline: tuple,
+                    shapetype: Optional[Tag]) -> list:
+    """A VML text box's size, padding, fill and outline, as CSS declarations."""
+    geom, adj = outline
+    inset = [_vml_pt(v, 2.88) for v in (box.get("inset") or "").split(",")]
+    inset += [2.88] * (4 - len(inset))          # left, top, right, bottom
+    inner = box.find("div")
+    pad = parse_decls(inner.get("style", "")) if inner else {}
+    width, height = _vml_pt(decl.get("width")), _vml_pt(decl.get("height"))
+    # the shape's own text area inside its outline
+    area = _vml_text_area(shape, shapetype, geom, adj, width, height)
+    styles = [
+        f"width:{width:.2f}pt",
+        f"height:{height:.2f}pt",
+        f"padding-left:{area[0] + inset[0] + _vml_pt(pad.get('padding-left')):.2f}pt",
+        f"padding-top:{area[1] + inset[1] + _vml_pt(pad.get('padding-top')):.2f}pt",
+        f"padding-right:{area[2] + inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
+        f"padding-bottom:{area[3] + inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
+    ]
+    # VML shapes are filled unless they say otherwise, white by default
+    fill = str(shape.get("fillcolor") or "white").split() or ["white"]
+    fill_el = shape.find("v:fill", recursive=False)
+    if (str(shape.get("filled", "t")).lower() not in ("f", "false")
+            and str((fill_el or {}).get("on", "t")).lower() not in ("f", "false")):
+        styles.append(f"background-color:{fill[0]}")
+    stroke = shape.find("v:stroke", recursive=False)
+    if (str(shape.get("stroked", "t")).lower() not in ("f", "false")
+            and str((stroke or {}).get("on", "t")).lower() not in ("f", "false")):
+        color = (str(shape.get("strokecolor") or "black").split() or ["black"])[0]
+        styles.append(f"border:{_vml_pt(shape.get('strokeweight'), 0.75):.2f}pt solid {color}")
+        dash = str((stroke or {}).get("dashstyle") or "").lower()
+        if dash and dash != "solid":
+            styles.append(f"x-dash:{dash}")
+        if str((stroke or {}).get("endcap") or "").lower() == "round":
+            styles.append("x-cap:round")
+    elif stroke is not None:
+        # a text box's border set side by side: drawn when all four sides
+        # have one, a weight of 0 being a hairline
+        sides = [stroke.find(f"o:{side}", recursive=False)
+                 for side in ("left", "top", "right", "bottom")]
+        if all(sd is not None and str(sd.get("on", "")).lower() in ("t", "true")
+               for sd in sides):
+            color = (str(sides[0].get("color") or "black").split() or ["black"])[0]
+            weight = max(_vml_pt(sides[0].get("weight"), 0.75), 0.5)
+            styles.append(f"border:{weight:.2f}pt solid {color}")
+    if geom != "rect":
+        styles.append(f"x-geom:{geom}")
+    if adj:
+        styles.append("x-adj:" + " ".join(f"{v:.5f}" for v in adj))
+    return styles
+
+
 def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
     """Publisher exports some text boxes (filled ones, for instance) as a
     picture of the text, keeping the real text only in the VML inside an
     <!--[if gte vml 1]> comment. Swaps each such picture for a positioned div
     holding that text, so it stays editable, with the shape's outline behind
-    it. Shapes inside a VML group, rotated or WordArt shapes, inline ones and
-    outlines PowerPoint has no preset for keep their picture. Returns how many
-    were swapped."""
+    it. Shapes inside a VML group, rotated or WordArt shapes and outlines
+    PowerPoint has no preset for keep their picture; inline ones are left to
+    restore_vml_inline_text_boxes. Returns how many were swapped."""
     found, text_rects = {}, {}
     for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
         vml = BeautifulSoup(str(c), "html.parser")
@@ -2219,49 +2453,17 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
         hit = found.get(img.get("v:shapes"))
         if not hit:
             continue
-        shape, decl, box, (geom, adj) = hit
-        inset = [_vml_pt(v, 2.88) for v in (box.get("inset") or "").split(",")]
-        inset += [2.88] * (4 - len(inset))          # left, top, right, bottom
-        inner = box.find("div")
-        pad = parse_decls(inner.get("style", "")) if inner else {}
-        width, height = _vml_pt(decl.get("width")), _vml_pt(decl.get("height"))
-        # the shape's own text area inside its outline
-        area = _vml_text_area(shape, text_rects.get(str(shape.get("type") or "").lstrip("#")),
-                              geom, adj, width, height)
+        shape, decl, box, outline = hit
         styles = [
             "position:absolute",
             f"left:{_vml_pt(decl.get('left')):.2f}pt",
             f"top:{_vml_pt(decl.get('top')):.2f}pt",
-            f"width:{width:.2f}pt",
-            f"height:{height:.2f}pt",
-            f"padding-left:{area[0] + inset[0] + _vml_pt(pad.get('padding-left')):.2f}pt",
-            f"padding-top:{area[1] + inset[1] + _vml_pt(pad.get('padding-top')):.2f}pt",
-            f"padding-right:{area[2] + inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
-            f"padding-bottom:{area[3] + inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
-        ]
-        # VML shapes are filled unless they say otherwise, white by default
-        fill = str(shape.get("fillcolor") or "white").split() or ["white"]
-        fill_el = shape.find("v:fill", recursive=False)
-        if (str(shape.get("filled", "t")).lower() not in ("f", "false")
-                and str((fill_el or {}).get("on", "t")).lower() not in ("f", "false")):
-            styles.append(f"background-color:{fill[0]}")
-        stroke = shape.find("v:stroke")
-        if (str(shape.get("stroked", "t")).lower() not in ("f", "false")
-                and str((stroke or {}).get("on", "t")).lower() not in ("f", "false")):
-            color = (str(shape.get("strokecolor") or "black").split() or ["black"])[0]
-            styles.append(f"border:{_vml_pt(shape.get('strokeweight'), 0.75):.2f}pt solid {color}")
-            dash = str((stroke or {}).get("dashstyle") or "").lower()
-            if dash and dash != "solid":
-                styles.append(f"x-dash:{dash}")
-            if str((stroke or {}).get("endcap") or "").lower() == "round":
-                styles.append("x-cap:round")
-        if geom != "rect":
-            styles.append(f"x-geom:{geom}")
-        if adj:
-            styles.append("x-adj:" + " ".join(f"{v:.5f}" for v in adj))
+        ] + _vml_box_styles(shape, decl, box, outline,
+                            text_rects.get(str(shape.get("type") or "").lstrip("#")))
         if decl.get("z-index"):
             styles.append(f"z-index:{decl['z-index']}")
         div = soup.new_tag("div", style=";".join(styles))
+        inner = box.find("div")
         for child in list((inner or box).children):
             div.append(child.extract())
         # the picture sits in a positioned span of its own
@@ -2270,6 +2472,88 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
         target.replace_with(div)
         count += 1
     return count
+
+
+VML_SHAPES = ["v:shape", "v:rect", "v:roundrect", "v:oval"]
+
+
+def restore_vml_inline_text_boxes(soup: BeautifulSoup) -> dict:
+    """Publisher exports a text box placed in another one's text as a picture
+    of it, right after the VML that keeps its real text. Marks each such
+    picture with x-textbox, the key of a div holding that text with the box's
+    size, padding and outline, for the converter to put in the picture's
+    place. A text box inside such a box's text becomes an <img> of its size
+    in the div, marked the same way. Rotated or WordArt shapes and outlines
+    PowerPoint has no preset for keep their picture. Returns the divs by key."""
+    divs: dict = {}
+    shapetypes: dict = {}
+    comments = [c for c in soup.find_all(
+        string=lambda t: isinstance(t, Comment) and "vml" in t[:30])]
+    parsed = [(c, BeautifulSoup(str(c), "html.parser")) for c in comments]
+    for _, vml in parsed:
+        for st in vml.find_all("v:shapetype"):
+            shapetypes[st.get("id")] = st
+
+    def rebuild(shape: Tag) -> Optional[Tag]:
+        box = shape.find("v:textbox", recursive=False)
+        if box is None or not box.get_text(strip=True) or shape.find("v:textpath"):
+            return None
+        decl = parse_decls(shape.get("style", ""))
+        if (decl.get("rotation") or "layout-flow" in str(box.get("style", ""))
+                or str(decl.get("position", "")).lower() == "absolute"):
+            return None
+        outline = _vml_outline(shape)
+        if outline is None:
+            return None
+        styles = _vml_box_styles(shape, decl, box, outline,
+                                 shapetypes.get(str(shape.get("type") or "").lstrip("#")))
+        div = soup.new_tag("div", style=";".join(styles))
+        content = box.find("div") or box
+        # the text boxes in this one's text, outermost first
+        for inner in [s for s in content.find_all(VML_SHAPES)
+                      if s.find_parent(VML_SHAPES) is shape]:
+            d = parse_decls(inner.get("style", ""))
+            size = f"width:{_vml_pt(d.get('width')):.2f}pt;height:{_vml_pt(d.get('height')):.2f}pt"
+            sub = rebuild(inner)
+            data = inner.find("v:imagedata", recursive=False)
+            # its picture for other browsers follows it, past <![if !vml]>
+            nxt = inner.next_sibling
+            while isinstance(nxt, PreformattedString) or (
+                    isinstance(nxt, NavigableString) and not nxt.strip()):
+                nxt = nxt.next_sibling
+            if isinstance(nxt, Tag) and nxt.name == "img":
+                nxt.decompose()
+            if sub is not None:
+                img = soup.new_tag("img", style=size)
+                img["x-textbox"] = key = f"textbox{len(divs)}"
+                divs[key] = sub
+            elif data is not None and data.get("src"):
+                img = soup.new_tag("img", src=data["src"], style=size,
+                                   alt=inner.get("alt") or "")
+            else:
+                inner.decompose()
+                continue
+            inner.replace_with(img)
+        for child in list(content.children):
+            div.append(child.extract())
+        return div
+
+    for c, vml in parsed:
+        tops = [s for s in vml.find_all(VML_SHAPES) if s.find_parent(VML_SHAPES) is None]
+        if len(tops) != 1:
+            continue
+        # the picture for other browsers follows the VML
+        nxt = c.next_sibling
+        while isinstance(nxt, NavigableString) and not isinstance(nxt, Comment) \
+                and not nxt.strip():
+            nxt = nxt.next_sibling
+        if not isinstance(nxt, Tag) or nxt.name != "img" or nxt.get("v:shapes"):
+            continue
+        div = rebuild(tops[0])
+        if div is not None:
+            nxt["x-textbox"] = key = f"textbox{len(divs)}"
+            divs[key] = div
+    return divs
 
 
 def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
@@ -2697,6 +2981,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     conv = Converter(args, warn)
     conv.pub_text = load_pub_text(export_dir, base)
     conv.pub_blank_frames = load_pub_frames(export_dir, base)
+    conv.pub_inline = load_pub_inline(export_dir, base)
 
     prs = Presentation()
     slide_pages = []   # (page_w_px, page_h_px, boxes)
@@ -2706,6 +2991,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
             raw = fh.read()
         soup = BeautifulSoup(drop_downlevel_fallbacks(raw), "lxml")
         restore_vml_text_boxes(soup)
+        conv.inline_boxes = restore_vml_inline_text_boxes(soup)
         restore_vml_pictures(soup)
         sheet = StyleSheet()
         for st in soup.find_all("style"):
