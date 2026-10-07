@@ -689,7 +689,11 @@ function Add-PublisherInlineTextLayout
         $ShiftX = 0,
 
         [double]
-        $ShiftY = 0
+        $ShiftY = 0,
+
+        # Where each of TextRange's inline shapes really sits, [left, top],
+        # read from a measured copy of the holding box
+        $Positions = $null
     )
 
     $inlineShapes = $null
@@ -717,8 +721,41 @@ function Add-PublisherInlineTextLayout
                 continue
             }
 
-            $left = [double]$shape.Left + $ShiftX
-            $top = [double]$shape.Top + $ShiftY
+            # Where the box sits is where its place in the text is: the
+            # shape's own Left and Top come out a margin's width further in.
+            # In an inline text box, that place is off by as much as the
+            # holding box's own is; its measured copy says where it is.
+            $left = $null
+            $top = $null
+
+            if ($Positions -and $Positions.Count -ge $k -and $Positions[$k - 1]) {
+
+                $left = $Positions[$k - 1][0]
+                $top = $Positions[$k - 1][1]
+            }
+
+            if ($null -eq $left -or [math]::Abs($left) -gt 5000 -or [math]::Abs($top) -gt 5000) {
+
+                try {
+
+                    $anchor = $shape.InlineTextRange
+                    $left = [double]$anchor.BoundLeft
+                    $top = [double]$anchor.BoundTop
+                }
+                catch { }
+            }
+
+            if ($null -eq $left -or [math]::Abs($left) -gt 5000 -or [math]::Abs($top) -gt 5000) {
+
+                $left = [double]$shape.Left
+                $top = [double]$shape.Top
+
+                if ([math]::Abs($left) -gt 5000 -or [math]::Abs($top) -gt 5000) {
+
+                    $left += $ShiftX
+                    $top += $ShiftY
+                }
+            }
 
             # Off the active page, an inline shape reports a position
             # thousands of points off the page.
@@ -741,10 +778,11 @@ function Add-PublisherInlineTextLayout
 
             # Publisher reports every paragraph and line of an inline text
             # box's own text at one point far off the page, though their
-            # line starts are right. Keep only the starts, so stage 2 breaks
-            # lines where Publisher does and flows the text from the box's
-            # top. A text box inside this one reports its position from that
-            # same point, standing for this box's top left corner.
+            # line starts are right. Without a measured copy (below), keep
+            # only the starts, so stage 2 breaks lines where Publisher does
+            # and flows the text from the box's top. A text box inside this
+            # one reports its position from that same point, standing for
+            # this box's top left corner.
             $dx = 0.0
             $dy = 0.0
             $first = @($record.paragraphs | Where-Object { $null -ne $_.top -and $null -ne $_.left })
@@ -755,7 +793,72 @@ function Add-PublisherInlineTextLayout
                 $dy = $top - $first[0].top
             }
 
-            foreach ($p in $record.paragraphs) {
+            # A copy of the box moved out of the text flow, where the box
+            # sits, does report its lines. Their positions stand for the
+            # box's own when they break in the same places. The copy is
+            # only for measuring: it goes again before the HTML export.
+            # The copy's own inline shapes report their places too, which
+            # stand for where this box's ones are.
+            $measured = $null
+            $copy = $null
+            $positions = New-Object System.Collections.Generic.List[object]
+
+            try {
+
+                $copy = $shape.Duplicate()
+                $copy.MoveOutOfTextFlow()
+                $copy.Left = $left
+                $copy.Top = $top
+                $copyRange = $copy.TextFrame.TextRange
+                $measured = Get-PublisherParagraphs -TextRange $copyRange
+
+                for ($j = 1; $j -le $copyRange.InlineShapes.Count; $j++) {
+
+                    $at = $null
+                    try {
+                        $anchor = $copyRange.InlineShapes.Item($j).InlineTextRange
+                        $at = @([double]$anchor.BoundLeft, [double]$anchor.BoundTop)
+                    }
+                    catch { }
+                    $positions.Add($at)
+                }
+            }
+            catch {
+
+                $measured = $null
+            }
+            finally {
+
+                if ($copy) {
+                    try { $copy.Delete() } catch { }
+                }
+            }
+
+            $same = $null -ne $measured -and $measured.Count -eq $record.paragraphs.Count
+
+            for ($i = 0; $same -and $i -lt $measured.Count; $i++) {
+
+                $a = @($measured[$i].lineStarts)
+                $b = @($record.paragraphs[$i].lineStarts)
+                $same = $null -ne $measured[$i].top -and $a.Count -gt 0 -and
+                    $a.Count -eq $b.Count -and ($a -join ',') -eq ($b -join ',')
+            }
+
+            for ($i = 0; $i -lt $record.paragraphs.Count; $i++) {
+
+                $p = $record.paragraphs[$i]
+
+                if ($same) {
+
+                    $m = $measured[$i]
+                    $p.top = $m.top
+                    $p.left = $m.left
+                    $p.height = $m.height
+                    $p.lineTops = $m.lineTops
+                    $p.lineLefts = $m.lineLefts
+                    $p.lineWidths = $m.lineWidths
+                    continue
+                }
 
                 $p.top = $null
                 $p.left = $null
@@ -773,7 +876,8 @@ function Add-PublisherInlineTextLayout
                 -Parent $record.name `
                 -Records $Records `
                 -ShiftX $dx `
-                -ShiftY $dy
+                -ShiftY $dy `
+                -Positions $positions
         }
         catch {
 

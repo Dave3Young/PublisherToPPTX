@@ -528,6 +528,9 @@ _BULLET_RE = re.compile("^[ \xa0]*(?:[•·▪■●○◦§Ø"
                         r"|\(?(?:\d{1,3}|[a-zA-Z]|[ivxIVX]{1,5})[.)])[ \xa0\t]+")
 
 
+_LONE_BULLETS = set("•·▪■●○◦§Øü–‐-")
+
+
 def _keep_key_chars(runs: list, n: int) -> None:
     """Cuts a paragraph's runs after its first n non-whitespace characters."""
     for i, run in enumerate(runs):
@@ -604,6 +607,10 @@ def load_pub_text(export_dir: str, base: str) -> dict:
                     rec["lineWidths"] = [widths[k] for k in ks] if widths else []
                     rec["lineJumps"] = [[s - offset, x] for s, x in par.get("lineJumps") or []
                                         if offset <= s < offset + size]
+                    # a line break doesn't end the paragraph: its space
+                    # before is above the first line, after below the last
+                    rec["spaceBefore"] = par.get("spaceBefore", 0) if i == 0 else 0
+                    rec["spaceAfter"] = par.get("spaceAfter", 0) if i + 1 == len(lines) else 0
                 if wrapped and ks and starts[ks[0]] == offset:
                     end = all_tops[ks[-1] + 1] if ks[-1] + 1 < len(all_tops) else (
                         par["top"] + (par.get("height") or 0.0))
@@ -662,6 +669,9 @@ def _pub_text_area(shape: dict, pars: list):
     if not lead:
         return None
     inset = max(min(lead), 0.0)
+    if inset > 0.15 * (fr - fl):
+        # too far in for a shape's inset: every line wraps around something
+        inset = 0.0
     return fl + inset, fr - inset
 
 
@@ -1107,6 +1117,7 @@ class Converter:
         # stage 1's text frames showing no text, and the page being walked
         self.pub_blank_frames: list = []
         self.hide_text = 0                # inside such a frame: no paragraphs
+        self.pub_overflowed = False       # the paragraphs just placed end the frame's text
         self.page = 1
         # inline text boxes rebuilt from the VML, by their picture's x-textbox,
         # and where stage 1 saw Publisher put them
@@ -1279,7 +1290,8 @@ class Converter:
             for rec in recs:
                 if rec.get("box") == self.pub_box and id(rec) not in self.pub_claimed:
                     self.pub_claimed.add(id(rec))
-                    return rec, False
+                    # placed if stage 1 could measure the box's lines
+                    return rec, rec.get("top") is not None and rec.get("left") is not None
         if region is not None:
             x0, y0, x1, y1 = region
             tol = 3.0
@@ -1290,9 +1302,15 @@ class Converter:
                     continue
                 rx = rec["left"] * self.dpi / 72.0
                 ry = rec["top"] * self.dpi / 72.0
-                if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
-                    self.pub_claimed.add(id(rec))
-                    return rec, True
+                if not (x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol):
+                    continue
+                # a frame lying over a bigger one: its text isn't the bigger
+                # one's (which may hold a hidden copy of it in its overflow)
+                frame = rec.get("frame")
+                if frame and (frame[1] - frame[0]) * self.dpi / 72.0 < 0.6 * (x1 - x0):
+                    continue
+                self.pub_claimed.add(id(rec))
+                return rec, True
         return recs[0], False
 
     def pub_blank_frame(self, x: float, y: float, w: float, h: float) -> bool:
@@ -1339,6 +1357,21 @@ class Converter:
         the end that stage 1 did not see in this box, below text that reaches
         the frame's bottom (px). Both are removed from paras."""
         text = [p for p in paras if p.text().strip()]
+        # an empty bulleted paragraph: the export writes its bullet, but
+        # stage 1 skips it as empty. It fills the gap between the ones
+        # around it.
+        for i in range(1, len(text) - 1):
+            p, before, after = text[i], text[i - 1].pub, text[i + 1].pub
+            if (p.pub_placed or not text[i - 1].pub_placed or not text[i + 1].pub_placed
+                    or p.text().strip(" \xa0\t") not in _LONE_BULLETS):
+                continue
+            top = before["top"] + (before.get("height") or 0.0)
+            if after["top"] - top <= 1.0:
+                continue
+            p.pub = dict(before, text="", top=top, height=after["top"] - top, lineTops=[top],
+                         lineStarts=[0], lineLefts=[], lineWidths=[], lineJumps=[],
+                         spaceBefore=0.0, spaceAfter=0.0, overflowAfter=False)
+            p.pub_placed = True
         if bottom is not None:
             n = len(text)
             while n and not text[n - 1].pub_placed:
@@ -1357,16 +1390,36 @@ class Converter:
                     text = text[:n]
         if not text or not all(p.pub_placed for p in text):
             return None
+        # the last text the frame shows: what follows it in the frame is
+        # in its overflow too
+        self.pub_overflowed = bool(text[-1].pub.get("overflowAfter"))
         paras[:] = text
-        settings = []
-        for i, p in enumerate(paras):
+
+        def text_tops(p):
+            """The paragraph's line tops, and how far its text's top is below
+            Publisher's: a first line made tall by something in it, such as
+            a picture, has its text on the line's foot, a line above the
+            next one. (A bullet makes it tall in PowerPoint too.)"""
             rec = p.pub
             # older layout files can repeat the last line
             tops = sorted(set(rec.get("lineTops") or [])) or [rec["top"]]
+            gaps = [b - a for a, b in zip(tops, tops[1:])]
+            if len(gaps) >= 2 and not p.bullet:
+                rest = sorted(gaps[1:])[len(gaps[1:]) // 2]
+                if rest > 0 and gaps[0] > 1.5 * rest:
+                    shift = gaps[0] - rest
+                    return [tops[0] + shift] + tops[1:], shift
+            return tops, 0.0
+
+        settings = []
+        for i, p in enumerate(paras):
+            rec = p.pub
+            tops, _ = text_tops(p)
             height = rec.get("height") or 0.0
             # the next paragraph's top; an empty paragraph between them isn't
             # in the HTML, so its space ends up in this one's space after
-            nxt = paras[i + 1].pub["top"] if i + 1 < len(paras) else rec["top"] + height
+            nxt = (paras[i + 1].pub["top"] + text_tops(paras[i + 1])[1] if i + 1 < len(paras)
+                   else rec["top"] + height)
             if len(tops) >= 2:
                 line = (tops[-1] - tops[0]) / (len(tops) - 1)
             else:
@@ -1390,9 +1443,10 @@ class Converter:
             p.exact_line_pt = line
             p.space_after_pt = max(after, 0.0)
         first, last = paras[0].pub, paras[-1].pub
+        first_shift = text_tops(paras[0])[1]
         paras[:] = [q for p in paras for q in _pub_wrap_indents(p)]
         k = self.dpi / 72.0
-        top = first["top"] - settings[0][2]
+        top = first["top"] + first_shift - settings[0][2]
         return top * k, (last["top"] + (last.get("height") or 0.0) - top) * k
 
     def _restore_tabs(self, para: Para) -> None:
@@ -2159,13 +2213,21 @@ class Converter:
         text_segs = [s for s in segs if s[0] == "text"]
         only_text = len(segs) == len(text_segs)
 
+        overflowed = False
         for kind, payload, seg_style in segs:
+            if overflowed and not has_coords(seg_style):
+                # after the last text the frame shows: Publisher hides it
+                if kind == "img":
+                    self.warn("dropped a picture in a text box's overflow, which Publisher hides")
+                continue
             if kind == "text":
                 paras = self.collect_paras(payload, sheet, seg_style, stop_nodes,
                                            region=(x, y, x + w, y + h))
                 if not paras:
                     continue
+                self.pub_overflowed = False
                 where = self._pub_place(paras, bottom=y + h if cb_h else None)
+                overflowed = bool(where) and self.pub_overflowed
                 if where:
                     top, used = where
                     self.order += 1
