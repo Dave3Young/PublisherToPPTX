@@ -123,6 +123,7 @@ INHERITED_PROPS = {
     "font-family", "font-size", "font-weight", "font-style", "font-variant",
     "color", "text-align", "line-height", "letter-spacing", "text-indent",
     "text-transform", "direction", "white-space",
+    "-x-script",                 # ours: "super" or "sub", from <sup>/<sub>
 }
 
 NAMED_COLORS = {
@@ -256,6 +257,10 @@ def computed_style(el: Tag, sheet: StyleSheet, inherited: dict) -> dict:
     inline = el.get("style")
     if inline:
         style.update(parse_decls(inline))
+    if el.name in ("sup", "sub"):
+        style["-x-script"] = "super" if el.name == "sup" else "sub"
+    elif str(style.get("vertical-align", "")).lower() in ("super", "sub"):
+        style["-x-script"] = str(style["vertical-align"]).lower()
     return style
 
 
@@ -366,6 +371,7 @@ class Run:
     color: Optional[RGBColor] = None
     caps: Optional[str] = None        # "all" | "small"
     spacing_pt: Optional[float] = None    # letter spacing
+    script: Optional[str] = None      # "super" | "sub"
 
 
 @dataclass
@@ -505,6 +511,26 @@ INLINE_PICTURE_GAP_PT = 2.88     # Publisher's default spacing around a picture
 # Publisher puts a line's extra spacing (above single spacing) below the text,
 # or above it for exact spacing; PowerPoint puts about this share of it above.
 PPT_EXTRA_ABOVE = 0.66
+# Superscript and subscript: both programs draw them at 2/3 size; PowerPoint
+# raises (or lowers) them by a share of the run's size, Publisher by about this.
+SCRIPT_SCALE = 2.0 / 3.0
+SUPER_BASELINE = "42000"
+SUB_BASELINE = "-25000"
+# Where PowerPoint puts the first baseline below the top of a box, per point of
+# font size, for a percentage line spacing (measured; the same for every
+# font). Away from single spacing it is linear, three quarters of the extra
+# going above the line; just below 100% the line keeps the font's own ascent.
+PPT_BASELINE_SLOPE, PPT_BASELINE_BASE = 0.9014, 0.0063
+PPT_BASELINE_NEAR_SINGLE = [(0.8, 0.735), (0.825, 0.771), (0.85, 0.792), (0.875, 0.828),
+                            (0.9, 0.845), (0.925, 0.881), (0.95, 0.906), (0.975, 0.942),
+                            (1.0, 0.967)]
+# Publisher keeps the first baseline where single spacing puts it for a larger
+# multiple, but takes this share of a smaller one's cut from above it. Gill
+# Sans is the exception: any larger multiple drops it by about this much of
+# the font size.
+PUB_CUT_ABOVE = 0.75
+CJK_LINE_SCALE = 1.3
+PUB_GILL_SANS_DROP = 0.25
 
 
 # ----------------------------------------------------------------------------
@@ -1013,6 +1039,47 @@ def pub_line_multiple(rec: dict) -> Optional[float]:
     return None                  # exact or at-least spacing: keep the HTML's
 
 
+def ppt_first_baseline(pct: float) -> float:
+    """PowerPoint's first baseline below the box top, per point of size."""
+    table = PPT_BASELINE_NEAR_SINGLE
+    if pct <= table[0][0] or pct > table[-1][0] + 0.0005:
+        return PPT_BASELINE_BASE + PPT_BASELINE_SLOPE * pct
+    for (x0, y0), (x1, y1) in zip(table, table[1:]):
+        if pct <= x1:
+            return y0 + (y1 - y0) * (pct - x0) / (x1 - x0)
+    return table[-1][1]
+
+
+def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
+             bold: bool = False, italic: bool = False,
+             pct: Optional[float] = None, measured: bool = False,
+             mixed: bool = False) -> Optional[float]:
+    """How far to raise a box above Publisher's first line top so that its
+    first line, at PowerPoint's percentage spacing line / (1.2 size) (or pct),
+    sits where Publisher's does at this multiple. Measured from single
+    spacing, where the two agree: line / multiple, unless that is far from
+    the font's single spacing and line isn't a measured pitch of text of one
+    size; then the font's, any further height being below the text."""
+    if size <= 0:
+        return None
+    pct = pct or line / (1.2 * size)
+    ratio = pub_single_spacing(font, bold, italic)
+    seen = 1.2 * pct / multiple
+    if not ratio or abs(seen / ratio - 1.0) <= 0.03 or (measured and not mixed):
+        # the line is Publisher's own single spacing times the multiple (a
+        # little off the font's is just rounding), unless text of another
+        # size has made it much taller, or it's a lone line's whole height
+        ratio = seen
+    if not ratio:
+        return None
+    lift = (ppt_first_baseline(pct) - ppt_first_baseline(ratio / 1.2)) * size
+    if multiple < 1.0:
+        lift += PUB_CUT_ABOVE * (1.0 - multiple) * ratio * size
+    elif multiple > 1.0 and (font_name(font) or "").lower().startswith("gill sans"):
+        lift -= PUB_GILL_SANS_DROP * size
+    return lift
+
+
 def snap_to_tab(pos: float, width: float, nbsp_w: float, stop: float) -> Optional[int]:
     """Tabs a whitespace run at pos stands for, or None if it is just spaces."""
     end = pos + width
@@ -1088,6 +1155,11 @@ def pub_single_spacing(family: Optional[str], bold: bool = False,
                 hhea = tables[b"hhea"]
                 asc, desc, gap = struct.unpack(">hhh", data[hhea + 4:hhea + 10])
             ratio = (asc - desc + gap) / upm or None
+            # an East Asian font (its code pages include Japanese, Chinese or
+            # Korean) gets Office's taller lines
+            pages = struct.unpack(">I", data[os2 + 78:os2 + 82])[0]
+            if ratio and pages & (0b11111 << 17):
+                ratio *= CJK_LINE_SCALE
         except (OSError, KeyError, struct.error, ZeroDivisionError):
             ratio = None
     _spacing_cache[key] = ratio
@@ -1150,6 +1222,7 @@ class Converter:
                   else None),
             spacing_pt=(lambda v: v * 72.0 / self.dpi if v else None)(
                 to_px(style.get("letter-spacing"), self.dpi)),
+            script=style.get("-x-script"),
         )
 
     def collect_paras(self, nodes, sheet: StyleSheet, inherited: dict,
@@ -1427,10 +1500,19 @@ class Converter:
                 line = (tops[-1] - tops[0]) / (len(tops) - 1)
             else:
                 line = height - (rec.get("spaceAfter") or 0.0) - (rec.get("spaceBefore") or 0.0)
-            if line <= 0:
-                return None
             # how far PowerPoint would put this paragraph's text below Publisher's
             multiple = pub_line_multiple(rec) if rec.get("lineRule") in (0, 1, 2, 5) else None
+            sized = [r for r in p.runs if r.text.strip() and r.size_pt and not r.script]
+            if len(tops) < 2 and multiple and sized:
+                # a single line's height comes from the paragraph's, which can
+                # leave out some of its space after: too short for its text,
+                # take the font's
+                big = max(sized, key=lambda r: r.size_pt)
+                ratio = pub_single_spacing(big.font, big.bold, big.italic)
+                if ratio and line < 0.9 * ratio * big.size_pt * multiple:
+                    line = ratio * big.size_pt * multiple
+            if line <= 0:
+                return None
             p.line_multiple = None
             line_sizes = _line_size_list(p) if p.keep_lines and multiple else []
             # (no gap measures the last line, so its size must be one the
@@ -1447,6 +1529,16 @@ class Converter:
                     line = fit * 1.2 * line_sizes[-1]
             lift = PPT_EXTRA_ABOVE * line * (1.0 - 1.0 / multiple) if multiple and multiple > 1 else 0.0
             sizes = [r.size_pt for r in p.runs if r.size_pt and r.text]
+            first_sizes = _line_size_list(p)[:1]
+            if multiple and sized and (p.line_multiple or len(_line_sizes(p)) == 1)                     and first_sizes and first_sizes[0]:
+                # PowerPoint spaces the lines by a percentage: where that puts
+                # the first line, against where Publisher's multiple does
+                big = max(sized, key=lambda r: r.size_pt)
+                better = pct_lift(line, first_sizes[0], multiple, big.font, big.bold, big.italic,
+                                  pct=p.line_multiple, measured=len(tops) >= 2,
+                                  mixed=(rec.get("size") or 0) < 0)
+                if better is not None:
+                    lift = better
             if rec.get("lineRule") == 3 and sizes:
                 # exact spacing: Publisher puts all the extra above the text.
                 # (rec's size is -9999999 when the paragraph mixes sizes.)
@@ -2786,6 +2878,17 @@ def px_to_emu(px: float, dpi: float) -> int:
     return int(round(px / dpi * EMU_PER_INCH))
 
 
+def _ppt_size(run, para) -> Optional[float]:
+    """The size PowerPoint gets for a run: a superscript or subscript at the
+    size it shrinks from, which is no more than the paragraph's other text
+    (the export can leave such a run at the paragraph's default size)."""
+    if not run.script or not run.size_pt:
+        return run.size_pt
+    others = [r.size_pt for r in para.runs if not r.script and r.size_pt and r.text.strip()]
+    size = run.size_pt / SCRIPT_SCALE
+    return min(size, max(others)) if others else size
+
+
 def _line_sizes(para) -> set:
     """The largest font size on each line of a paragraph, spaces included;
     None for a run with no size."""
@@ -2801,7 +2904,7 @@ def _line_size_list(para) -> list:
                 sizes.append(max(line, key=lambda s: s or 0.0) if None not in line else None)
                 line = []
             if piece:
-                line.append(run.size_pt)
+                line.append(_ppt_size(run, para))
     if line:
         sizes.append(max(line, key=lambda s: s or 0.0) if None not in line else None)
     return sizes
@@ -2968,7 +3071,9 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                     f = r.font
                     if run.font:
                         f.name = run.font
-                    f.size = Pt(max(min(run.size_pt or 12.0, 400.0), 1.0))
+                    # (the export gives a superscript's shrunk size, which
+                    # PowerPoint would shrink again)
+                    f.size = Pt(max(min(_ppt_size(run, para) or 12.0, 400.0), 1.0))
                     f.bold = run.bold
                     f.italic = run.italic
                     f.underline = run.underline
@@ -2977,6 +3082,9 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
                     rpr = r._r.get_or_add_rPr()
                     if run.caps:
                         rpr.set("cap", run.caps)
+                    if run.script:
+                        rpr.set("baseline", SUPER_BASELINE if run.script == "super"
+                                else SUB_BASELINE)
                     spacing = (run.spacing_pt or 0.0) - tighten.get(line, 0.0)
                     if round(spacing * 100):
                         rpr.set("spc", str(int(round(max(min(spacing, 100.0), -100.0) * 100))))
