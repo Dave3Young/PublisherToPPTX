@@ -602,6 +602,8 @@ def load_pub_text(export_dir: str, base: str) -> dict:
                     rec["lineStarts"] = [starts[k] - offset for k in ks]
                     rec["lineLefts"] = [lefts[k] for k in ks] if lefts else []
                     rec["lineWidths"] = [widths[k] for k in ks] if widths else []
+                    rec["lineJumps"] = [[s - offset, x] for s, x in par.get("lineJumps") or []
+                                        if offset <= s < offset + size]
                 if wrapped and ks and starts[ks[0]] == offset:
                     end = all_tops[ks[-1] + 1] if ks[-1] + 1 < len(all_tops) else (
                         par["top"] + (par.get("height") or 0.0))
@@ -812,6 +814,19 @@ def _pub_line_breaks(para, rec: dict) -> bool:
             breaks[i] = (i, "-\v")            # Publisher hyphenated the word
         else:
             breaks[i] = (i, "\v")
+    # a word Publisher moves on past a picture in the middle of its line
+    # goes there by a tab, to a stop of its own
+    frame = rec.get("frame")
+    for s, x in (rec.get("lineJumps") or []) if frame else []:
+        i = _utf16_index(text, int(s))
+        j = i
+        while j > 0 and full[j - 1] in " \xa0":
+            j -= 1
+        # (after a hyphen, with no space to replace)
+        if not 0 < j <= i < len(full.rstrip()) or j in breaks or i in breaks:
+            continue
+        breaks[j] = (i, "\t")
+        para.tab_stops.append((float(x) - frame[0], 0))
     if not breaks:
         return True
     pos, skip_to = 0, 0

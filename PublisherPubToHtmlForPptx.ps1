@@ -83,6 +83,10 @@ $PB_LINKED_PICTURE = 11
 $PB_PICTURE = 13
 $PB_OLE_OBJECT = 12
 
+# PbWrapType: text runs around these on every side
+$PB_WRAP_SQUARE = 1
+$PB_WRAP_TIGHT = 2
+
 # Pasted/embedded artwork sometimes lands as an OLE object rather than a true
 # picture shape. Set this to $true to attempt SaveAsPicture() on those as well.
 $INCLUDE_OLE_OBJECTS = $false
@@ -298,7 +302,11 @@ function Get-PublisherParagraphs
         # Lines report no real top, as in an inline text box: follow
         # them by their starts alone
         [switch]
-        $NoLineTops
+        $NoLineTops,
+
+        # The page's shapes that text wraps around, from
+        # Get-PublisherWrapObstacles
+        $Obstacles = @()
     )
 
     $paragraphs = New-Object System.Collections.Generic.List[object]
@@ -338,7 +346,10 @@ function Get-PublisherParagraphs
             # so stage 2 can break lines where Publisher does, and lineLefts
             # and lineWidths where each line sits across the page, which
             # moves where text wraps around a picture or another frame.
+            # lineJumps holds [start, left] for each word Publisher moves on
+            # past a picture in the middle of its line, text on both sides.
             $lineTops = New-Object System.Collections.Generic.List[double]
+            $lineJumps = New-Object System.Collections.Generic.List[object]
             $lineStarts = New-Object System.Collections.Generic.List[int]
             $lineLefts = New-Object System.Collections.Generic.List[double]
             $lineWidths = New-Object System.Collections.Generic.List[double]
@@ -373,6 +384,45 @@ function Get-PublisherParagraphs
                     $lineStarts.Add([int]($line.Start - $para.Start))
                     $lineLefts.Add([double]$line.BoundLeft)
                     $lineWidths.Add([double]$line.BoundWidth)
+
+                    # only a line with a picture inside it can jump, and
+                    # reading its words is slow
+                    $lineLeft = [double]$line.BoundLeft
+                    $lineRight = $lineLeft + [double]$line.BoundWidth
+                    $lineBottom = $lineTop + [double]$line.BoundHeight
+                    $inside = @($Obstacles | Where-Object {
+                        $_[1] -lt $lineBottom -and $_[3] -gt $lineTop -and
+                        $_[0] -gt $lineLeft + 1 -and $_[0] -lt $lineRight - 1 })
+
+                    if ($NoLineTops -or $inside.Count -eq 0) {
+                        continue
+                    }
+
+                    $lineEnd = $line.Start + $line.Length
+                    $prevRight = $null
+                    $prevWord = -1
+
+                    for ($w = 1; $w -le 500; $w++) {
+
+                        $word = $line.Words($w, 1)
+
+                        if ($word.Length -eq 0 -or $word.Start -ge $lineEnd -or
+                            $word.Start -le $prevWord) {
+                            break
+                        }
+
+                        $prevWord = $word.Start
+                        $wordLeft = [double]$word.BoundLeft
+
+                        if ($null -ne $prevRight -and $wordLeft -gt $prevRight + 4 -and
+                            @($inside | Where-Object {
+                                $_[0] -lt $wordLeft -and $_[2] -gt $prevRight }).Count -gt 0) {
+
+                            $lineJumps.Add(@([int]($word.Start - $para.Start), $wordLeft))
+                        }
+
+                        $prevRight = $wordLeft + [double]$word.BoundWidth
+                    }
                 }
             }
             catch { }
@@ -385,6 +435,7 @@ function Get-PublisherParagraphs
                 lineStarts  = $lineStarts
                 lineLefts   = $lineLefts
                 lineWidths  = $lineWidths
+                lineJumps   = $lineJumps
                 text        = $texts[$i - 1]
                 align       = [int]$format.Alignment
                 firstIndent = [double]$format.FirstLineIndent
@@ -421,8 +472,16 @@ function Add-PublisherTextLayout
         $PageNumber,
 
         [Parameter(Mandatory = $true)]
-        $Records
+        $Records,
+
+        # The page's shapes that text wraps around; found from Shapes
+        # when not given
+        $Obstacles = $null
     )
+
+    if ($null -eq $Obstacles) {
+        $Obstacles = Get-PublisherWrapObstacles -Shapes $Shapes
+    }
 
     $shapeCount = $Shapes.Count
 
@@ -439,7 +498,8 @@ function Add-PublisherTextLayout
                 Add-PublisherTextLayout `
                     -Shapes $shape.GroupItems `
                     -PageNumber $PageNumber `
-                    -Records $Records
+                    -Records $Records `
+                    -Obstacles $Obstacles
 
                 continue
             }
@@ -502,7 +562,8 @@ function Add-PublisherTextLayout
 
             if ($textRange -and $textRange.Length -gt 0) {
 
-                Add-PublisherTextFrameFields -Record $record -Shape $shape -TextRange $textRange
+                Add-PublisherTextFrameFields -Record $record -Shape $shape -TextRange $textRange `
+                    -Obstacles $Obstacles
                 $Records.Add($record)
 
                 Add-PublisherInlineTextLayout `
@@ -520,6 +581,51 @@ function Add-PublisherTextLayout
     }
 }
 
+# The shapes on a page, in groups too, that text wraps around on every
+# side, each as @(left, top, right, bottom) out to its wrapping distance.
+function Get-PublisherWrapObstacles
+{
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        $Shapes
+    )
+
+    $obstacles = New-Object System.Collections.Generic.List[object]
+
+    for ($n = 1; $n -le $Shapes.Count; $n++) {
+
+        try {
+
+            $shape = $Shapes.Item($n)
+
+            if ($shape.Type -eq $PB_GROUP) {
+
+                foreach ($o in (Get-PublisherWrapObstacles -Shapes $shape.GroupItems)) {
+                    $obstacles.Add($o)
+                }
+
+                continue
+            }
+
+            $wrap = $shape.TextWrap
+
+            if ($wrap.Type -ne $PB_WRAP_SQUARE -and $wrap.Type -ne $PB_WRAP_TIGHT) {
+                continue
+            }
+
+            $obstacles.Add(@(
+                ([double]$shape.Left - [double]$wrap.DistanceLeft),
+                ([double]$shape.Top - [double]$wrap.DistanceTop),
+                ([double]$shape.Left + [double]$shape.Width + [double]$wrap.DistanceRight),
+                ([double]$shape.Top + [double]$shape.Height + [double]$wrap.DistanceBottom)))
+        }
+        catch { }
+    }
+
+    return ,$obstacles
+}
+
 function Add-PublisherTextFrameFields
 {
     param
@@ -534,7 +640,9 @@ function Add-PublisherTextFrameFields
         $TextRange,
 
         [switch]
-        $NoLineTops
+        $NoLineTops,
+
+        $Obstacles = @()
     )
 
     $frame = $Shape.TextFrame
@@ -544,7 +652,8 @@ function Add-PublisherTextFrameFields
     $Record.valign = [int]$frame.VerticalTextAlignment
     $Record.margins = @([double]$frame.MarginLeft, [double]$frame.MarginTop,
                         [double]$frame.MarginRight, [double]$frame.MarginBottom)
-    $Record.paragraphs = (Get-PublisherParagraphs -TextRange $TextRange -NoLineTops:$NoLineTops)
+    $Record.paragraphs = (Get-PublisherParagraphs -TextRange $TextRange -NoLineTops:$NoLineTops `
+                              -Obstacles $Obstacles)
 
     # Text that doesn't fit is hidden; the export still writes it.
     $overflowing = $false
