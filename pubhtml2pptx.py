@@ -531,6 +531,9 @@ PPT_BASELINE_NEAR_SINGLE = [(0.8, 0.735), (0.825, 0.771), (0.85, 0.792), (0.875,
 PUB_CUT_ABOVE = 0.75
 CJK_LINE_SCALE = 1.3
 PUB_GILL_SANS_DROP = 0.25
+# Gill Sans MT at exact spacing in Publisher: (descent, share of the line
+# above the baseline), measured; its font tables give neither
+PUB_GILL_SANS_EXACT = (0.33, 0.755)
 
 
 # ----------------------------------------------------------------------------
@@ -1117,22 +1120,21 @@ def text_width_px(text: str, family: Optional[str], size_px: float,
     return (spaces * 0.28 + (len(text) - spaces) * 0.5) * size_px
 
 
-_spacing_cache: dict = {}
+_metrics_cache: dict = {}
 
 
-def pub_single_spacing(family: Optional[str], bold: bool = False,
-                       italic: bool = False) -> Optional[float]:
-    """Publisher's single line spacing for a font, as a multiple of its size:
-    the line height its OS/2 table gives (ascender, descender and line gap),
-    or for a font whose OS/2 table is older than version 2, its hhea table.
-    PowerPoint's single spacing is 1.2 times the size for every font. None
-    if the font file can't be read."""
+def _font_metrics(family: Optional[str], bold: bool = False,
+                  italic: bool = False) -> Optional[dict]:
+    """A font's vertical metrics, per point of size: OS/2 typo ascender,
+    descender and line gap (typo), the same from hhea (hhea), Windows ascent
+    and descent (win), the OS/2 table's version, and its code page bits.
+    None if the font file can't be read."""
     name = (font_name(family) or "").lower()
     style = " ".join(s for s, on in (("bold", bold), ("italic", italic)) if on)
     key = (name, style)
-    if key in _spacing_cache:
-        return _spacing_cache[key]
-    ratio = None
+    if key in _metrics_cache:
+        return _metrics_cache[key]
+    found = None
     fname = ((installed_fonts().get(f"{name} {style}") if style else None)
              or FONT_FILES.get(name) or installed_fonts().get(name))
     if fname:
@@ -1148,22 +1150,54 @@ def pub_single_spacing(family: Optional[str], bold: bool = False,
                 tag, _, at, _ = struct.unpack(">4sIII", data[off + 12 + 16 * i:off + 28 + 16 * i])
                 tables[tag] = at
             upm = struct.unpack(">H", data[tables[b"head"] + 18:tables[b"head"] + 20])[0]
-            os2 = tables[b"OS/2"]
-            if struct.unpack(">H", data[os2:os2 + 2])[0] >= 2:
-                asc, desc, gap = struct.unpack(">hhh", data[os2 + 68:os2 + 74])
-            else:
-                hhea = tables[b"hhea"]
-                asc, desc, gap = struct.unpack(">hhh", data[hhea + 4:hhea + 10])
-            ratio = (asc - desc + gap) / upm or None
-            # an East Asian font (its code pages include Japanese, Chinese or
-            # Korean) gets Office's taller lines
-            pages = struct.unpack(">I", data[os2 + 78:os2 + 82])[0]
-            if ratio and pages & (0b11111 << 17):
-                ratio *= CJK_LINE_SCALE
+            os2, hhea = tables[b"OS/2"], tables[b"hhea"]
+            found = dict(
+                version=struct.unpack(">H", data[os2:os2 + 2])[0],
+                typo=tuple(v / upm for v in struct.unpack(">hhh", data[os2 + 68:os2 + 74])),
+                win=tuple(v / upm for v in struct.unpack(">HH", data[os2 + 74:os2 + 78])),
+                hhea=tuple(v / upm for v in struct.unpack(">hhh", data[hhea + 4:hhea + 10])),
+                pages=struct.unpack(">I", data[os2 + 78:os2 + 82])[0])
         except (OSError, KeyError, struct.error, ZeroDivisionError):
-            ratio = None
-    _spacing_cache[key] = ratio
+            found = None
+    _metrics_cache[key] = found
+    return found
+
+
+def pub_single_spacing(family: Optional[str], bold: bool = False,
+                       italic: bool = False) -> Optional[float]:
+    """Publisher's single line spacing for a font, as a multiple of its size:
+    the line height its OS/2 table gives (ascender, descender and line gap),
+    or for a font whose OS/2 table is older than version 2, its hhea table.
+    PowerPoint's single spacing is 1.2 times the size for every font. None
+    if the font file can't be read."""
+    m = _font_metrics(family, bold, italic)
+    if not m:
+        return None
+    asc, desc, gap = m["typo"] if m["version"] >= 2 else m["hhea"]
+    ratio = (asc - desc + gap) or None
+    # an East Asian font (its code pages include Japanese, Chinese or
+    # Korean) gets Office's taller lines
+    if ratio and m["pages"] & (0b11111 << 17):
+        ratio *= CJK_LINE_SCALE
     return ratio
+
+
+def exact_lift(line: float, size: float, font: Optional[str],
+               bold: bool = False, italic: bool = False) -> Optional[float]:
+    """How far to raise a box above Publisher's first line top so that its
+    first line, at exact spacing line, sits where Publisher's does.
+    PowerPoint spaces it like the matching percentage; Publisher puts the
+    baseline the font's descent above the line's foot, but no higher than
+    its share of the line by Windows ascent and descent."""
+    m = _font_metrics(font, bold, italic)
+    if size <= 0 or not m:
+        return None
+    win_asc, win_desc = m["win"]
+    desc, share = -m["hhea"][1], win_asc / ((win_asc + win_desc) or 1.0)
+    if (font_name(font) or "").lower().startswith("gill sans"):
+        desc, share = PUB_GILL_SANS_EXACT
+    pub = max(line - desc * size, share * line)
+    return ppt_first_baseline(line / (1.2 * size)) * size - pub
 
 
 def is_positioned(style: dict) -> bool:
@@ -1479,13 +1513,20 @@ class Converter:
             rec = p.pub
             # older layout files can repeat the last line
             tops = sorted(set(rec.get("lineTops") or [])) or [rec["top"]]
+            # the first line's top is above the paragraph's space before,
+            # which Publisher keeps at the top of a frame or cell too
+            before = rec.get("spaceBefore") or 0.0
+            if before > 0 and (len(tops) < 2 or tops[1] - tops[0] > before):
+                tops = [tops[0] + before] + tops[1:]
+            else:
+                before = 0.0
             gaps = [b - a for a, b in zip(tops, tops[1:])]
             if len(gaps) >= 2 and not p.bullet:
                 rest = sorted(gaps[1:])[len(gaps[1:]) // 2]
                 if rest > 0 and gaps[0] > 1.5 * rest:
                     shift = gaps[0] - rest
-                    return [tops[0] + shift] + tops[1:], shift
-            return tops, 0.0
+                    return [tops[0] + shift] + tops[1:], shift + before
+            return tops, before
 
         settings = []
         for i, p in enumerate(paras):
@@ -1540,9 +1581,13 @@ class Converter:
                 if better is not None:
                     lift = better
             if rec.get("lineRule") == 3 and sizes:
-                # exact spacing: Publisher puts all the extra above the text.
+                # exact spacing: Publisher puts the extra above the text
+                big = max(sized, key=lambda r: r.size_pt) if sized else None
+                exact = (exact_lift(line, first_sizes[0], big.font, big.bold, big.italic)
+                         if big and first_sizes and first_sizes[0] else None)
                 # (rec's size is -9999999 when the paragraph mixes sizes.)
-                lift = -(1.0 - PPT_EXTRA_ABOVE) * (line - 1.2 * max(sizes))
+                lift = exact if exact is not None else \
+                    -(1.0 - PPT_EXTRA_ABOVE) * (line - 1.2 * max(sizes))
             settings.append([line, nxt - tops[-1] - line, lift])
         # raise each paragraph by its lift: the box by the first one's, and
         # each later one through the space after the paragraph before it
