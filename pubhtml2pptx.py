@@ -798,9 +798,11 @@ def _pub_line_breaks(para, rec: dict) -> bool:
         if not 0 < i < len(full.rstrip()):
             continue
         j = i
-        while j > 0 and full[j - 1] in " \xa0":
-            j -= 1                            # the spaces at the wrap go
-        if j == 0 or full[j - 1] in "\v\n\t":
+        # the spaces and tabs at the wrap go: they show nothing, and a tab
+        # past the right edge would make PowerPoint wrap again
+        while j > 0 and full[j - 1] in " \xa0\t":
+            j -= 1
+        if j == 0 or full[j - 1] in "\v\n":
             continue
         if j < i:
             breaks[j] = (i, "\v")
