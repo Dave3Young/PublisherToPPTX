@@ -1,5 +1,5 @@
 {
-    "version":  1,
+    "version":  2,
     "units":  "pt",
     "shapes":  [
                    {
@@ -34,6 +34,9 @@
                                               "lineWidths":  [
                                                                  356.25
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Three images in a row: A, B, C from left to right.",
                                               "align":  0,
                                               "firstIndent":  0,

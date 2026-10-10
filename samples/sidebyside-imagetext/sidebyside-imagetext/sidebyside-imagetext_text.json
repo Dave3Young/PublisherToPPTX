@@ -1,5 +1,5 @@
 {
-    "version":  1,
+    "version":  2,
     "units":  "pt",
     "shapes":  [
                    {
@@ -38,6 +38,9 @@
                                                                  225.56251525878906,
                                                                  176.25
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "This text box sits to the right of image A, top-aligned with it.",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -73,6 +76,9 @@
                                                                  243.75,
                                                                  53.437557220458984
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Image B sits below, with a text box to its left.",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -127,6 +133,9 @@
                                                                  238.31251525878906,
                                                                  21.937480926513672
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "This text box sits to the left of image B.",
                                               "align":  0,
                                               "firstIndent":  0,

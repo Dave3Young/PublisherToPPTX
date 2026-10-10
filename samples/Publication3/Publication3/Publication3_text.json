@@ -1,5 +1,5 @@
 {
-    "version":  1,
+    "version":  2,
     "units":  "pt",
     "shapes":  [
                    {
@@ -37,6 +37,9 @@
                                                                 "lineWidths":  [
                                                                                    108.18756103515625
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "New Website Menu",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -68,6 +71,9 @@
                                                                 "lineWidths":  [
                                                                                    208.68756103515625
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "1) WordPress Theme that you select",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -99,6 +105,9 @@
                                                                 "lineWidths":  [
                                                                                    281.06253051757813
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "From https://wordpress.org/themes/ or a Vendor",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -130,6 +139,9 @@
                                                                 "lineWidths":  [
                                                                                    251.25
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "Cost of Themes range from free to $100+   ",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -161,6 +173,9 @@
                                                                 "lineWidths":  [
                                                                                    169.31251525878906
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "                                  $____  ",
                                                                 "align":  2,
                                                                 "firstIndent":  0,
@@ -192,6 +207,9 @@
                                                                 "lineWidths":  [
                                                                                    182.81251525878906
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "2) Selection of Hosting Provider",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -223,6 +241,9 @@
                                                                 "lineWidths":  [
                                                                                    192.56251525878906
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "Choose one of the options below:",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -254,6 +275,9 @@
                                                                 "lineWidths":  [
                                                                                    100.5
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "  Wordpress.com",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -285,6 +309,9 @@
                                                                 "lineWidths":  [
                                                                                    198
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "    ($5 monthly fee billable to you)",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -316,6 +343,9 @@
                                                                 "lineWidths":  [
                                                                                    283.87503051757813
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "Our Installation Cost                                   $150",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -347,6 +377,9 @@
                                                                 "lineWidths":  [
                                                                                    86.625038146972656
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "   Bigrock.com",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -378,6 +411,9 @@
                                                                 "lineWidths":  [
                                                                                    196.87504577636719
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "    ($30 annual fee billable to you)",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -409,6 +445,9 @@
                                                                 "lineWidths":  [
                                                                                    283.87503051757813
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "Our Installation Cost                                   $150",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -440,6 +479,9 @@
                                                                 "lineWidths":  [
                                                                                    97.875038146972656
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "    AWS Lightsail",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -471,6 +513,9 @@
                                                                 "lineWidths":  [
                                                                                    225
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "    ($5 monthly fee billable to you)       ",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -502,6 +547,9 @@
                                                                 "lineWidths":  [
                                                                                    283.87503051757813
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "Our Installation Cost                                   $300",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -533,6 +581,9 @@
                                                                 "lineWidths":  [
                                                                                    103.12503814697266
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "    Other Provider",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -564,6 +615,9 @@
                                                                 "lineWidths":  [
                                                                                    197.06251525878906
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "    ($? monthly fee billable to you)",
                                                                 "align":  0,
                                                                 "firstIndent":  0,
@@ -595,6 +649,9 @@
                                                                 "lineWidths":  [
                                                                                    283.87503051757813
                                                                                ],
+                                                                "lineJumps":  [
+
+                                                                              ],
                                                                 "text":  "Our Installation Cost                                   $150",
                                                                 "align":  0,
                                                                 "firstIndent":  0,

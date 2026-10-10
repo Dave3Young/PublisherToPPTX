@@ -1,5 +1,5 @@
 {
-    "version":  1,
+    "version":  2,
     "units":  "pt",
     "shapes":  [
                    {
@@ -34,6 +34,9 @@
                                               "lineWidths":  [
                                                                  253.87504577636719
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "A 2x2 grid: A B on top, C D below.",
                                               "align":  0,
                                               "firstIndent":  0,

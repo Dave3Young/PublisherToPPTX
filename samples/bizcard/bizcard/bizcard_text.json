@@ -1,5 +1,5 @@
 {
-    "version":  1,
+    "version":  2,
     "units":  "pt",
     "shapes":  [
                    {
@@ -34,6 +34,9 @@
                                               "lineWidths":  [
                                                                  74.81243896484375
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Primary Business Address",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -65,6 +68,9 @@
                                               "lineWidths":  [
                                                                  44.437480926513672
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Address Line 2",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -96,6 +102,9 @@
                                               "lineWidths":  [
                                                                  44.437480926513672
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Address Line 3",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -127,6 +136,9 @@
                                               "lineWidths":  [
                                                                  44.437480926513672
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Address Line 4",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -177,6 +189,9 @@
                                               "lineWidths":  [
                                                                  65.81243896484375
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Phone: 555-555-5555",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -208,6 +223,9 @@
                                               "lineWidths":  [
                                                                  57.937480926513672
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Fax: 555-555-5555",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -239,6 +257,9 @@
                                               "lineWidths":  [
                                                                  90.56243896484375
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "E-mail: someone@example.com",
                                               "align":  0,
                                               "firstIndent":  0,
@@ -289,6 +310,9 @@
                                               "lineWidths":  [
                                                                  75.1874771118164
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "david.e.young@sbcglobal.net",
                                               "align":  1,
                                               "firstIndent":  0,
@@ -359,6 +383,9 @@
                                               "lineWidths":  [
                                                                  15.187479972839355
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Title",
                                               "align":  1,
                                               "firstIndent":  0,
@@ -409,6 +436,9 @@
                                               "lineWidths":  [
                                                                  50.25
                                                              ],
+                                              "lineJumps":  [
+
+                                                            ],
                                               "text":  "Business Name",
                                               "align":  0,
                                               "firstIndent":  0,
