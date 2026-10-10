@@ -113,7 +113,7 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   Editing the text in Canva or PowerPoint doesn't rewrap those lines, so convert with
   `-Reflow` if the text will be rewritten. PowerPoint sets some fonts up to about 2% wider
   than Publisher, so a line that nearly fills its box is set slightly tighter to keep it on
-  one line. A line Publisher indents to clear a picture on its left starts at the box edge.
+  one line.
 - **Text wrapping and hyphenation with `-Reflow`, or without `_text.json`:** PowerPoint
   can't wrap text around a picture, and doesn't hyphenate. Where Publisher does either,
   lines break differently, and the paragraphs that follow in the same text box can sit
