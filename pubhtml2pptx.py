@@ -1359,8 +1359,10 @@ class Converter:
         )
 
     def collect_paras(self, nodes, sheet: StyleSheet, inherited: dict,
-                      stop_nodes: set, region=None) -> list:
-        """Paragraphs for a list of sibling nodes (or a single element's children)."""
+                      stop_nodes: set, region=None, text_area=None) -> list:
+        """Paragraphs for a list of sibling nodes (or a single element's children).
+        text_area: the text box's own left and right (px), inside its shape's
+        geometry, which stage 1's frame for an autoshape only guesses."""
         if self.hide_text:
             return []
         if isinstance(nodes, Tag):
@@ -1465,6 +1467,9 @@ class Converter:
                     head, at = self.pub_find_continued(pub_key(p.text()), region)
                     if head:
                         rec, placed = head, at
+            if rec and rec.get("frame") and text_area:
+                # lines are indented from where the box's text starts
+                rec = dict(rec, frame=tuple(v * 72.0 / self.dpi for v in text_area))
             if rec and apply_pub_whitespace(p.runs, rec["text"]):
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
@@ -2533,7 +2538,8 @@ class Converter:
                 continue
             if kind == "text":
                 paras = self.collect_paras(payload, sheet, seg_style, stop_nodes,
-                                           region=(x, y, x + w, y + h))
+                                           region=(x, y, x + w, y + h),
+                                           text_area=(content_x, content_x + content_w))
                 if not paras:
                     continue
                 self.pub_overflowed = False
