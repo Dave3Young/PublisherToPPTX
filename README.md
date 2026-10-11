@@ -87,6 +87,24 @@ These settings are at the top of the script:
 | `-OutputFolder` | beside each `.pptx` | Where each presentation's PNG folder is made. |
 | `-Dpi` | Save As's own size | Pixels per inch of slide. Save As follows PowerPoint's export resolution setting, 96 dpi unless changed. At 150 dpi a letter page is 1275 x 1650. |
 
+`PubToPng.ps1` does the same for Publisher, and needs only Publisher. It saves every page
+of a `.pub` as a PNG, as **File > Save As > PNG** does for the page showing. Each `Flyer.pub`
+gets a `Flyer_pages\` folder holding `Page1.png`, `Page2.png` and so on. The folder is not
+`Flyer\`, which is where stage 1 writes its export. At the same `-Dpi`, its pages and
+`PptxToPng.ps1`'s slides are the same size, so they can be compared pixel for pixel.
+
+```powershell
+.\PubToPng.ps1 -Path .\MyFlyer.pub
+.\PubToPng.ps1 -Path C:\Pubs -Recurse -Dpi 300
+```
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `-Path` | (required) | A `.pub` file, or a folder of them. |
+| `-Recurse` | | With a folder, also convert the `.pub` files in its subfolders. |
+| `-OutputFolder` | beside each `.pub` | Where each publication's PNG folder is made. |
+| `-Dpi` | 150 | Pixels per inch of page: 96, 150 or 300, Publisher's own picture resolutions. |
+
 ## What stage 1 records beyond the HTML
 Publisher's HTML export loses some layout, so stage 1 also asks Publisher for it directly.
 
