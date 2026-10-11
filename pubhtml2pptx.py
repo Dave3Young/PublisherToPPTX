@@ -672,8 +672,11 @@ def load_pub_text(export_dir: str, base: str) -> dict:
         # an inline text box's paragraphs have no position: they're found by
         # the box they're in
         box = f"{page}/{shape.get('name')}" if shape.get("inline") else None
+        # the last text the frame shows; blank paragraphs after it aren't kept
+        shown = max((n for n, par in enumerate(pars) if pub_key(str(par.get("text", "")))),
+                    default=-1)
         for n, par in enumerate(pars):
-            add(par, page, frame, bool(shape.get("overflowing")) and n + 1 == len(pars), box)
+            add(par, page, frame, bool(shape.get("overflowing")) and n == shown, box)
         for cell in shape.get("cells") or []:
             for par in cell.get("paragraphs") or []:
                 add(par, page)
