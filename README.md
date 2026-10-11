@@ -69,6 +69,24 @@ These settings are at the top of the script:
 | `-SkipInstall` | | Skip the Python package check, which makes repeat runs faster. |
 | `-Verbose` | | Log every shape as it is placed. |
 
+## Saving slides as PNG
+`PptxToPng.ps1` is a separate tool and needs only PowerPoint. It saves every slide of a
+`.pptx` as a PNG, as **File > Save As > PNG** does in PowerPoint: each `Deck.pptx` gets a
+`Deck\` folder holding `Slide1.PNG`, `Slide2.PNG` and so on. Use it to compare a converted
+`.pptx` with the original publication, page by page.
+
+```powershell
+.\PptxToPng.ps1 -Path .\MyFlyer\MyFlyer.pptx
+.\PptxToPng.ps1 -Path C:\Pubs -Recurse -Dpi 150
+```
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `-Path` | (required) | A `.pptx` file, or a folder of them. |
+| `-Recurse` | | With a folder, also convert the `.pptx` files in its subfolders. |
+| `-OutputFolder` | beside each `.pptx` | Where each presentation's PNG folder is made. |
+| `-Dpi` | Save As's own size | Pixels per inch of slide. Save As follows PowerPoint's export resolution setting, 96 dpi unless changed. At 150 dpi a letter page is 1275 x 1650. |
+
 ## What stage 1 records beyond the HTML
 Publisher's HTML export loses some layout, so stage 1 also asks Publisher for it directly.
 
