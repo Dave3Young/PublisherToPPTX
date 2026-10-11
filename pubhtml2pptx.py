@@ -1543,17 +1543,17 @@ class Converter:
 
     def pub_find_start(self, key: str, region):
         """An unclaimed record inside region whose text is the start of key,
-        for a paragraph cut short by its text box's overflow. Claims it."""
-        if len(key) < 20:
-            return None, False
+        for a paragraph cut short by its text box's overflow. Claims it. A
+        short start only where stage 1 says the frame's text ends."""
         x0, y0, x1, y1 = region
         tol = 3.0
         for k, recs in self.pub_text.items():
-            if len(k) < 20 or len(k) >= len(key) or not key.startswith(k):
+            if not k or len(k) >= len(key) or not key.startswith(k):
                 continue
             for rec in recs:
                 if (rec.get("top") is None or id(rec) in self.pub_claimed
-                        or rec.get("page", 0) not in (0, self.page)):
+                        or rec.get("page", 0) not in (0, self.page)
+                        or (len(k) < 20 and not rec.get("overflowAfter"))):
                     continue
                 rx = rec["left"] * self.dpi / 72.0
                 ry = rec["top"] * self.dpi / 72.0
