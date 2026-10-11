@@ -1326,6 +1326,82 @@ try {
         try {
 
             # ====================================================
+            # TEXT LAYOUT
+            # ====================================================
+            # Each paragraph's real text, with its tabs, and its
+            # formatting, for stage 2. Master pages are page 0.
+            # Before exporting pictures: once SaveAsPicture has
+            # rendered a page, Publisher moves table text below a cell
+            # that runs past its bottom, and gives the text it hides
+            # there bounds too, though it draws neither.
+
+            $textLayoutPath = Join-Path `
+                $outputFolder `
+                ($baseName + "_text.json")
+
+            if ((Test-Path $textLayoutPath) -and -not $RefreshTextLayout) {
+
+                Write-Output "Text layout file already exists; not rewriting: $textLayoutPath"
+            }
+            else {
+
+                try {
+
+                    # Bounds snap to screen pixels at the current zoom: about
+                    # 1.8pt at the default 37%, 0.2pt at 400%.
+                    try { $doc.ActiveView.Zoom = 400 } catch { }
+
+                    $layoutRecords = New-Object System.Collections.Generic.List[object]
+
+                    for ($pageNumber = 1; $pageNumber -le $doc.Pages.Count; $pageNumber++) {
+
+                        # Inline text boxes report their position only on
+                        # the active page.
+                        try {
+                            $doc.ActiveView.ActivePage = $doc.Pages.Item($pageNumber)
+                            $doc.ActiveView.Zoom = 400
+                        }
+                        catch { }
+
+                        Add-PublisherTextLayout `
+                            -Shapes $doc.Pages.Item($pageNumber).Shapes `
+                            -PageNumber $pageNumber `
+                            -Records $layoutRecords
+                    }
+
+                    for ($masterNumber = 1; $masterNumber -le $doc.MasterPages.Count; $masterNumber++) {
+
+                        Add-PublisherTextLayout `
+                            -Shapes $doc.MasterPages.Item($masterNumber).Shapes `
+                            -PageNumber 0 `
+                            -Records $layoutRecords
+                    }
+
+                    # version 2 records inline text boxes
+                    $layout = [ordered]@{
+                        version = 2
+                        units   = "pt"
+                        shapes  = $layoutRecords
+                    }
+
+                    $json = ConvertTo-Json -InputObject $layout -Depth 10
+
+                    [System.IO.File]::WriteAllText(
+                        [string]$textLayoutPath,
+                        $json,
+                        (New-Object System.Text.UTF8Encoding $false))
+
+                    Write-Output "Text layout: $($layoutRecords.Count) text frame(s) and table(s)"
+                }
+                catch {
+
+                    Write-Warning "Unable to record the text layout."
+                    Write-Warning $_
+                }
+            }
+
+
+            # ====================================================
             # INDIVIDUAL PICTURE EXPORT
             # ====================================================
 
@@ -1628,78 +1704,6 @@ try {
                 catch {
 
                     Write-Warning "Unable to record the page size."
-                    Write-Warning $_
-                }
-            }
-
-
-            # ====================================================
-            # TEXT LAYOUT
-            # ====================================================
-            # Each paragraph's real text, with its tabs, and its
-            # formatting, for stage 2. Master pages are page 0.
-
-            $textLayoutPath = Join-Path `
-                $outputFolder `
-                ($baseName + "_text.json")
-
-            if ((Test-Path $textLayoutPath) -and -not $RefreshTextLayout) {
-
-                Write-Output "Text layout file already exists; not rewriting: $textLayoutPath"
-            }
-            else {
-
-                try {
-
-                    # Bounds snap to screen pixels at the current zoom: about
-                    # 1.8pt at the default 37%, 0.2pt at 400%.
-                    try { $doc.ActiveView.Zoom = 400 } catch { }
-
-                    $layoutRecords = New-Object System.Collections.Generic.List[object]
-
-                    for ($pageNumber = 1; $pageNumber -le $doc.Pages.Count; $pageNumber++) {
-
-                        # Inline text boxes report their position only on
-                        # the active page.
-                        try {
-                            $doc.ActiveView.ActivePage = $doc.Pages.Item($pageNumber)
-                            $doc.ActiveView.Zoom = 400
-                        }
-                        catch { }
-
-                        Add-PublisherTextLayout `
-                            -Shapes $doc.Pages.Item($pageNumber).Shapes `
-                            -PageNumber $pageNumber `
-                            -Records $layoutRecords
-                    }
-
-                    for ($masterNumber = 1; $masterNumber -le $doc.MasterPages.Count; $masterNumber++) {
-
-                        Add-PublisherTextLayout `
-                            -Shapes $doc.MasterPages.Item($masterNumber).Shapes `
-                            -PageNumber 0 `
-                            -Records $layoutRecords
-                    }
-
-                    # version 2 records inline text boxes
-                    $layout = [ordered]@{
-                        version = 2
-                        units   = "pt"
-                        shapes  = $layoutRecords
-                    }
-
-                    $json = ConvertTo-Json -InputObject $layout -Depth 10
-
-                    [System.IO.File]::WriteAllText(
-                        [string]$textLayoutPath,
-                        $json,
-                        (New-Object System.Text.UTF8Encoding $false))
-
-                    Write-Output "Text layout: $($layoutRecords.Count) text frame(s) and table(s)"
-                }
-                catch {
-
-                    Write-Warning "Unable to record the text layout."
                     Write-Warning $_
                 }
             }
