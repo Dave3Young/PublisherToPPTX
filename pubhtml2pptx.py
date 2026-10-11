@@ -703,6 +703,15 @@ def _pub_fill_bounds(shape: dict, pars: list) -> list:
             continue
         if not (ft - 1.0 <= tops[0] <= fb and (not lefts or fl - 1.0 <= min(lefts) <= fr)):
             continue
+        # a last line of trailing spaces can sit below the frame
+        keep = [k for k, t in enumerate(tops) if t <= fb]
+        if len(keep) < len(tops):
+            par = dict(par, lineTops=[tops[k] for k in keep])
+            for name in ("lineStarts", "lineLefts", "lineWidths"):
+                values = par.get(name) or []
+                if len(values) == len(tops):
+                    par[name] = [values[k] for k in keep]
+            tops, lefts = par["lineTops"], par.get("lineLefts") or []
         nxt = out[n + 1].get("top") if n + 1 < len(out) else None
         if nxt:
             bottom = float(nxt)
