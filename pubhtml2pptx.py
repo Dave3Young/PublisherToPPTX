@@ -667,7 +667,7 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             page = int(shape.get("page", 0))    # 0: a master page
         except (TypeError, ValueError):
             page = 0
-        pars = shape.get("paragraphs") or []
+        pars = _pub_fill_bounds(shape, shape.get("paragraphs") or [])
         frame = _pub_text_area(shape, pars)
         # an inline text box's paragraphs have no position: they're found by
         # the box they're in
@@ -678,6 +678,70 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             for par in cell.get("paragraphs") or []:
                 add(par, page)
     return index
+
+
+def _pub_fill_bounds(shape: dict, pars: list) -> list:
+    """Publisher gives a paragraph that runs on past its frame, into a linked
+    one for instance, no bounds (top, left and height all 0), though it
+    measures its lines in the frame. Their bounds come from the lines
+    instead: the top is the first line's, the left the leftmost line's, and
+    the bottom the next paragraph's top or, for the last, a line below its
+    last line plus its space after. One with a single line and nothing below
+    stays unplaced, and so do lines outside the frame: a linked frame
+    reports its first paragraph with the lines it has in the frame before."""
+    out = list(pars)
+    try:
+        fl, ft = float(shape["left"]), float(shape["top"])
+        fr, fb = fl + float(shape["width"]), ft + float(shape["height"])
+    except (KeyError, TypeError, ValueError):
+        return out
+    for n in range(len(out) - 1, -1, -1):
+        par = out[n]
+        tops = par.get("lineTops") or []
+        lefts = par.get("lineLefts") or []
+        if par.get("top") or par.get("left") or par.get("height") or not tops:
+            continue
+        if not (ft - 1.0 <= tops[0] <= fb and (not lefts or fl - 1.0 <= min(lefts) <= fr)):
+            continue
+        nxt = out[n + 1].get("top") if n + 1 < len(out) else None
+        if nxt:
+            bottom = float(nxt)
+        elif len(tops) >= 2:
+            gaps = sorted(b - a for a, b in zip(tops, tops[1:]))
+            bottom = tops[-1] + gaps[len(gaps) // 2] + float(par.get("spaceAfter") or 0.0)
+        else:
+            continue
+        out[n] = dict(par, top=float(tops[0]), height=bottom - float(tops[0]),
+                      left=float(min(lefts)) if lefts else None)
+    return out
+
+
+def _pub_cut(rec: dict, n: int) -> dict:
+    """A copy of a paragraph's record cut after its first n non-whitespace
+    characters, with the lines that start before the cut. The paragraph goes
+    on elsewhere, so its space after doesn't follow the cut."""
+    text = str(rec.get("text", ""))
+    seen, cut = 0, len(text)
+    for i, ch in enumerate(text):
+        if not ch.isspace():
+            seen += 1
+            if seen == n:
+                cut = i + 1
+                break
+    end = len(text[:cut].encode("utf-16-le")) // 2
+    starts = rec.get("lineStarts") or []
+    keep = [k for k, s in enumerate(starts) if s < end]
+    out = dict(rec, text=text[:cut], spaceAfter=0.0,
+               lineStarts=[starts[k] for k in keep],
+               lineJumps=[j for j in rec.get("lineJumps") or [] if j[0] < end])
+    for name in ("lineTops", "lineLefts", "lineWidths"):
+        values = rec.get(name) or []
+        out[name] = [values[k] for k in keep] if len(values) == len(starts) else []
+    tops = out.get("lineTops") or []
+    if rec.get("top") is not None and len(tops) >= 2 and len(tops) == len(keep):
+        gaps = sorted(b - a for a, b in zip(tops, tops[1:]))
+        out["height"] = tops[-1] + gaps[len(gaps) // 2] - float(rec["top"])
+    return out
 
 
 def _pub_text_area(shape: dict, pars: list):
@@ -1124,9 +1188,14 @@ def text_width_px(text: str, family: Optional[str], size_px: float,
             fname = ((installed_fonts().get(f"{name} {style}") if style else None)
                      or FONT_FILES.get(name) or installed_fonts().get(name))
             if fname:
+                # (PIL's own search of the fonts folder matches case, and
+                # Windows names some font files in capitals)
+                path = fname if os.path.isabs(fname) else os.path.join(
+                    os.environ.get("WINDIR", r"C:\Windows"), "Fonts", fname)
                 try:
                     from PIL import ImageFont
-                    font = ImageFont.truetype(fname, max(key[2], 1))
+                    font = ImageFont.truetype(path if os.path.exists(path) else fname,
+                                              max(key[2], 1))
                 except (OSError, ImportError):
                     font = None
             _font_cache[key] = font
@@ -1379,6 +1448,11 @@ class Converter:
                 if start:
                     rec, placed = start, at
                     _keep_key_chars(p.runs, len(pub_key(rec["text"])))
+                else:
+                    # a paragraph running on into a linked text box
+                    head, at = self.pub_find_continued(pub_key(p.text()), region)
+                    if head:
+                        rec, placed = head, at
             if rec and apply_pub_whitespace(p.runs, rec["text"]):
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
@@ -1474,6 +1548,31 @@ class Converter:
                 if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
                     self.pub_claimed.add(id(rec))
                     return rec, True
+        return None, False
+
+    def pub_find_continued(self, key: str, region):
+        """An unclaimed record inside region whose text starts with key, for a
+        paragraph that runs on into a linked text box: the export splits its
+        text between the boxes, while stage 1 records all of it in the first,
+        with the lines it shows there. Claims it and returns a copy cut to
+        key's text."""
+        if len(key) < 20:
+            return None, False
+        x0, y0, x1, y1 = region
+        tol = 3.0
+        for k, recs in self.pub_text.items():
+            if len(k) <= len(key) or not k.startswith(key):
+                continue
+            for rec in recs:
+                if (rec.get("top") is None or rec.get("left") is None
+                        or id(rec) in self.pub_claimed
+                        or rec.get("page", 0) not in (0, self.page)):
+                    continue
+                rx = rec["left"] * self.dpi / 72.0
+                ry = rec["top"] * self.dpi / 72.0
+                if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
+                    self.pub_claimed.add(id(rec))
+                    return _pub_cut(rec, len(key)), True
         return None, False
 
     def _pub_place(self, paras: list, bottom: Optional[float] = None):
