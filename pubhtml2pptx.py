@@ -2855,6 +2855,111 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
 VML_SHAPES = ["v:shape", "v:rect", "v:roundrect", "v:oval"]
 
 
+def _vml_group_parts(group: Tag, pics: list) -> Optional[list]:
+    """A VML group's pictures and text boxes, each with its place in pt:
+    ("img", shape, rect, pic) with stage 1's picture for it, or ("text",
+    shape, rect, textbox, outline). None if the group holds anything else,
+    or a picture stage 1 didn't save."""
+    decl = parse_decls(group.get("style", ""))
+    if decl.get("rotation") or str(decl.get("position", "")).lower() != "absolute":
+        return None
+    gl, gt = _vml_pt(decl.get("left")), _vml_pt(decl.get("top"))
+    gw, gh = _vml_pt(decl.get("width")), _vml_pt(decl.get("height"))
+    try:
+        ox, oy = (float(v) for v in str(group.get("coordorigin") or "0,0").split(","))
+        cw, ch = (float(v) for v in str(group.get("coordsize") or "1000,1000").split(","))
+    except ValueError:
+        return None
+    if not (gw and gh and cw and ch):
+        return None
+    parts = []
+    for child in group.find_all(True, recursive=False):
+        if child.name not in VML_SHAPES:
+            if child.name in ("o:lock", "v:fill", "v:stroke", "v:shadow"):
+                continue
+            return None
+        cd = parse_decls(child.get("style", ""))
+        if cd.get("rotation") or child.find("v:textpath"):
+            return None
+        try:
+            rect = (gl + (float(cd["left"]) - ox) * gw / cw,
+                    gt + (float(cd["top"]) - oy) * gh / ch,
+                    float(cd["width"]) * gw / cw, float(cd["height"]) * gh / ch)
+        except (KeyError, ValueError):
+            return None
+        box = child.find("v:textbox", recursive=False)
+        data = child.find("v:imagedata", recursive=False)
+        if box is not None and box.get_text(strip=True):
+            outline = _vml_outline(child)
+            if outline is None or "layout-flow" in str(box.get("style", "")):
+                return None
+            parts.append(("text", child, rect, box, outline))
+        elif data is not None and data.get("src"):
+            fits = [(misfit, pic) for pic in pics
+                    for misfit in [_place_misfit(*rect, pic)] if misfit is not None]
+            if not fits:
+                return None
+            parts.append(("img", child, rect, min(fits, key=lambda f: f[0])[1]))
+        # an empty frame draws nothing in the group's picture either
+    return parts
+
+
+def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> int:
+    """Publisher exports a group, a picture with its caption say, as one
+    picture of the lot. Where the group holds only pictures and text boxes,
+    and stage 1 saved each picture (pics, from load_pub_pictures), swaps it
+    for those pictures and the text boxes' editable text, each in its place.
+    Other groups keep their picture. Returns how many were swapped."""
+    if not pics:
+        return 0
+    pics = [p for p in pics if p["page"] in (0, page)]
+    text_rects, found = {}, {}
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
+        vml = BeautifulSoup(str(c), "html.parser")
+        for st in vml.find_all("v:shapetype"):
+            text_rects[st.get("id")] = st
+        for group in vml.find_all("v:group"):
+            if group.find_parent("v:group"):
+                continue
+            parts = _vml_group_parts(group, pics)
+            if (parts and any(p[0] == "img" for p in parts)
+                    and any(p[0] == "text" for p in parts)):
+                found[group.get("id")] = (parts, parse_decls(group.get("style", "")).get("z-index"))
+    count = 0
+    for img in soup.find_all("img"):
+        ids = str(img.get("v:shapes") or "").split()
+        hit = found.get(ids[0]) if ids else None
+        if not hit:
+            continue
+        parts, z = hit
+        target = img.parent if (img.parent and img.parent.name == "span"
+                                and len(img.parent.find_all(True)) == 1) else img
+        for part in parts:
+            left, top, width, height = part[2]
+            styles = ["position:absolute", f"left:{left:.2f}pt", f"top:{top:.2f}pt"]
+            if part[0] == "img":
+                styles += [f"width:{width:.2f}pt", f"height:{height:.2f}pt"]
+                if z:
+                    styles.append(f"z-index:{z}")
+                el = soup.new_tag("img", src=os.path.basename(part[3]["png"]),
+                                  style=";".join(styles))
+            else:
+                _, shape, _, box, outline = part
+                styles += _vml_box_styles(
+                    shape, {"width": f"{width:.2f}pt", "height": f"{height:.2f}pt"}, box,
+                    outline, text_rects.get(str(shape.get("type") or "").lstrip("#")))
+                if z:
+                    styles.append(f"z-index:{z}")
+                el = soup.new_tag("div", style=";".join(styles))
+                inner = box.find("div")
+                for child in list((inner or box).children):
+                    el.append(child.extract())
+            target.insert_before(el)
+        target.extract()
+        count += 1
+    return count
+
+
 def restore_vml_inline_text_boxes(soup: BeautifulSoup) -> dict:
     """Publisher exports a text box placed in another one's text as a picture
     of it, right after the VML that keeps its real text. Marks each such
@@ -3058,6 +3163,34 @@ def aspect_of(path: str) -> Optional[float]:
 def hires_candidates(export_dir: str, base: str, page_no: int) -> list:
     pat = os.path.join(export_dir, f"{base}_page_{page_no:03d}_image_*.png")
     return sorted(globmod.glob(pat))
+
+
+def load_pub_pictures(export_dir: str, base: str) -> Optional[list]:
+    """Stage 1's record of where each exported PNG's picture sits, in pt:
+    dicts with file, page (0 for a master page), left, top, width, height
+    and rotation. None if stage 1 didn't record them."""
+    path = os.path.join(export_dir, base + "_pictures.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    pics = data.get("pictures") if isinstance(data, dict) else None
+    if isinstance(pics, dict):
+        # PowerShell writes a list of one as the item itself
+        pics = [pics]
+    out = []
+    for pic in pics or []:
+        try:
+            png = os.path.join(export_dir, str(pic["file"]))
+            if os.path.isfile(png):
+                out.append({"png": png, "page": int(pic.get("page", 0)),
+                             "left": float(pic["left"]), "top": float(pic["top"]),
+                             "width": float(pic["width"]), "height": float(pic["height"]),
+                             "rotation": float(pic.get("rotation") or 0.0)})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -3385,6 +3518,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     conv.pub_text = load_pub_text(export_dir, base)
     conv.pub_blank_frames = load_pub_frames(export_dir, base)
     conv.pub_inline = load_pub_inline(export_dir, base)
+    pub_pictures = load_pub_pictures(export_dir, base)
 
     prs = Presentation()
     slide_pages = []   # (page_w_px, page_h_px, boxes)
@@ -3394,6 +3528,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
             raw = fh.read()
         soup = BeautifulSoup(drop_downlevel_fallbacks(raw), "lxml")
         restore_vml_text_boxes(soup)
+        restore_vml_groups(soup, pub_pictures, len(slide_pages) + 1)
         conv.inline_boxes = restore_vml_inline_text_boxes(soup)
         restore_vml_pictures(soup)
         sheet = StyleSheet()
@@ -3457,7 +3592,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
 
     for idx, (pw, ph, boxes) in enumerate(slide_pages, start=1):
         if args.hires:
-            apply_hires(boxes, export_dir, base, idx, resolver, warn)
+            apply_hires(boxes, export_dir, base, idx, resolver, warn, dpi)
         if args.verbose:
             print(f"  page {idx}: {len(boxes)} shapes  ({pw/dpi:.2f} x {ph/dpi:.2f} in)")
         build_slide(prs, boxes, resolver, dpi, warn, args.verbose)
@@ -3499,13 +3634,20 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     return stats
 
 
-def apply_hires(boxes, export_dir, base, page_no, resolver, warn):
-    """Swap Publisher's web-quality images for the 300dpi COM PNGs, in order."""
-    cands = hires_candidates(export_dir, base, page_no)
-    if not cands:
-        return
+def apply_hires(boxes, export_dir, base, page_no, resolver, warn, dpi):
+    """Swap Publisher's web-quality images for the 300dpi COM PNGs: each for
+    the image in the same place, where stage 1 recorded the places, else
+    in order."""
     img_boxes = [b for b in sorted(boxes, key=lambda z: z.order) if b.kind == "image"]
     if not img_boxes:
+        return
+    pics = load_pub_pictures(export_dir, base)
+    if pics is not None:
+        _hires_by_place(img_boxes, [p for p in pics if p["page"] in (0, page_no)],
+                        resolver, dpi)
+        return
+    cands = hires_candidates(export_dir, base, page_no)
+    if not cands:
         return
     if len(cands) != len(img_boxes):
         warn(f"page {page_no}: {len(img_boxes)} images in HTML but {len(cands)} "
@@ -3518,6 +3660,51 @@ def apply_hires(boxes, export_dir, base, page_no, resolver, warn):
             warn(f"page {page_no}: aspect mismatch for {os.path.basename(png)}; kept web image")
             continue
         box.src = os.path.basename(png)
+        resolver.used.add(os.path.normcase(os.path.abspath(png)))
+
+
+def _place_misfit(x, y, w, h, pic, k=1.0) -> Optional[float]:
+    """How far a frame at x, y, w, h (pt times k) is from stage 1's picture,
+    by centre and by size either way round, since the HTML gives a rotated
+    picture's frame unrotated or its bounds; None if too far to be it."""
+    pw, ph = pic["width"] * k, pic["height"] * k
+    if not w or not h or pw <= 0 or ph <= 0:
+        return None
+    off = math.hypot(x + w / 2 - (pic["left"] * k + pw / 2),
+                     y + h / 2 - (pic["top"] * k + ph / 2))
+    if off > max(3.0 * k, 0.08 * min(pw, ph)):
+        return None
+    size = min(max(abs(w - pw) / pw, abs(h - ph) / ph),
+               max(abs(w - ph) / ph, abs(h - pw) / pw))
+    if size > 0.12:
+        return None
+    return off / max(pw, ph) + size
+
+
+def _hires_by_place(img_boxes, pics, resolver, dpi):
+    """Gives each image the PNG of the picture stage 1 saw in its place. An
+    image with none, a picture of WordArt or a shape, keeps the web copy."""
+    k = dpi / 72.0
+    pairs = []
+    for bi, box in enumerate(img_boxes):
+        for pi, pic in enumerate(pics):
+            misfit = _place_misfit(box.x, box.y, box.w, box.h, pic, k)
+            if misfit is not None:
+                pairs.append((misfit, bi, pi))
+    used_b, used_p = set(), set()
+    for _, bi, pi in sorted(pairs):
+        if bi in used_b or pi in used_p:
+            continue
+        png = pics[pi]["png"]
+        # a PNG of another shape than the image's, a cropped picture's
+        # whole one for instance, would stretch
+        box_ar, png_ar = img_boxes[bi].w / img_boxes[bi].h, aspect_of(png)
+        if png_ar and min(abs(box_ar - png_ar) / max(box_ar, png_ar),
+                          abs(1 / box_ar - png_ar) / max(1 / box_ar, png_ar)) > 0.12:
+            continue
+        used_b.add(bi)
+        used_p.add(pi)
+        img_boxes[bi].src = os.path.basename(png)
         resolver.used.add(os.path.normcase(os.path.abspath(png)))
 
 

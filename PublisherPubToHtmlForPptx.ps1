@@ -148,7 +148,11 @@ function Export-PublisherPictures
 
         [Parameter(Mandatory = $true)]
         [ref]
-        $FileHadFailure
+        $FileHadFailure,
+
+        # Where each picture sits, for stage 2 to match its PNG to the
+        # HTML's copy of it
+        $Records = $null
     )
 
     $shapeCount = $Shapes.Count
@@ -185,6 +189,23 @@ function Export-PublisherPictures
                 $pngFilePath = Join-Path `
                     $OutputFolder `
                     $pngFileName
+
+                if ($null -ne $Records) {
+
+                    try {
+
+                        $Records.Add([ordered]@{
+                            file     = $pngFileName
+                            page     = $(if ($PageLabel -eq "page") { $PageNumber } else { 0 })
+                            left     = [double]$shape.Left
+                            top      = [double]$shape.Top
+                            width    = [double]$shape.Width
+                            height   = [double]$shape.Height
+                            rotation = [double]$shape.Rotation
+                        })
+                    }
+                    catch { }
+                }
 
                 if (Test-Path $pngFilePath) {
 
@@ -252,7 +273,8 @@ function Export-PublisherPictures
                         -SuccessCounter $SuccessCounter `
                         -SkipCounter $SkipCounter `
                         -FailCounter $FailCounter `
-                        -FileHadFailure $FileHadFailure
+                        -FileHadFailure $FileHadFailure `
+                        -Records $Records
                 }
                 catch {
 
@@ -1311,6 +1333,7 @@ try {
             Write-Output "Searching publication for pictures..."
 
            $pictureCount = 0
+            $pictureRecords = New-Object System.Collections.Generic.List[object]
 
             try {
 
@@ -1335,7 +1358,8 @@ try {
                             -SuccessCounter ([ref]$pngSuccessCount) `
                             -SkipCounter ([ref]$pngSkipCount) `
                             -FailCounter ([ref]$pngFailCount) `
-                            -FileHadFailure ([ref]$thisFileHadFailure)
+                            -FileHadFailure ([ref]$thisFileHadFailure) `
+                            -Records $pictureRecords
 
                     }
                     catch {
@@ -1380,7 +1404,8 @@ try {
                             -SuccessCounter ([ref]$pngSuccessCount) `
                             -SkipCounter ([ref]$pngSkipCount) `
                             -FailCounter ([ref]$pngFailCount) `
-                            -FileHadFailure ([ref]$thisFileHadFailure)
+                            -FileHadFailure ([ref]$thisFileHadFailure) `
+                            -Records $pictureRecords
 
                     }
                     catch {
@@ -1525,6 +1550,47 @@ try {
                 Write-Error $_
 
                 $thisFileHadFailure = $true
+            }
+
+
+            # ====================================================
+            # PICTURE POSITIONS
+            # ====================================================
+            # Where each exported picture sits on its page, in points
+            # (page 0 for a master page), so stage 2 can swap each PNG in
+            # for the HTML picture in the same place. The HTML also holds
+            # pictures of WordArt and shapes, so matching in order fails.
+
+            $picturesPath = Join-Path `
+                $outputFolder `
+                ($baseName + "_pictures.json")
+
+            if (Test-Path $picturesPath) {
+
+                Write-Output "Picture positions file already exists; not rewriting: $picturesPath"
+            }
+            elseif ($pictureRecords.Count -gt 0) {
+
+                try {
+
+                    $json = ConvertTo-Json -InputObject ([ordered]@{
+                        version  = 1
+                        units    = "pt"
+                        pictures = $pictureRecords
+                    }) -Depth 5
+
+                    [System.IO.File]::WriteAllText(
+                        [string]$picturesPath,
+                        $json,
+                        (New-Object System.Text.UTF8Encoding $false))
+
+                    Write-Output "Picture positions: $($pictureRecords.Count) picture(s)"
+                }
+                catch {
+
+                    Write-Warning "Unable to record the picture positions."
+                    Write-Warning $_
+                }
             }
 
 

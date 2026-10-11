@@ -74,6 +74,7 @@ Publisher's HTML export loses some layout, so stage 1 also asks Publisher for it
 
 | File | Holds | Stage 2 uses it to |
 | --- | --- | --- |
+| `<name>_pictures.json` | Where each exported picture sits on its page. | Swap each 300 dpi PNG in for the HTML picture in the same place with `-HiRes`, and split a picture grouped with text boxes. |
 | `<name>_pagesize.txt` | The page width and height in inches. | Size the slides. The export sizes its page to the content, sometimes with a broken height. |
 | `<name>_text.json` | Every paragraph's real text (with its tabs), alignment, indents, spacing, line-spacing rule, font, tab stops, where Publisher puts it on the page, and where each of its lines starts. Also each text box placed in another's text, with where Publisher puts it. | Put tabs and tab stops back exactly, place each paragraph, each line of inline pictures and each inline text box where Publisher does, and break lines where Publisher breaks them. |
 
@@ -91,7 +92,7 @@ puts their pictures; run stage 1 with `-RefreshTextLayout` to fix either.
 | Text box | An editable text box, keeping font, size, colour, bold, italic, underline, all caps, small caps, letter spacing (Publisher's tracking too, from `_text.json`), line breaks, indents (hanging ones too, from `_text.json`), tabs and blank lines. With `_text.json`, each line ends where Publisher ends it, with a hyphen where Publisher hyphenates a word, so text wraps as in Publisher even where it flows around a picture. Use `-Reflow` to let PowerPoint wrap the text instead. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup, with the box's outline behind it: a rectangle, rounded rectangle, ellipse or callout, solid or dashed. |
 | Text box overflow | Left out, as Publisher hides it: paragraphs past the bottom of a text box, and inline pictures too wide for it. Each is listed as a warning. |
 | Picture | A picture at the same position and size, cropped to the same shape when Publisher crops it to a rounded rectangle or ellipse, and stacked in Publisher's order. With `-HiRes`, stage 1's 300 dpi PNG is used. |
-| Pictures inside groups | Exported one by one in stage 1. |
+| Pictures inside groups | Exported one by one in stage 1. Publisher exports a group, a picture with its caption for instance, as one picture of the lot. Where the group holds only pictures and text boxes and stage 1 recorded where each picture sits, stage 2 rebuilds it as stage 1's PNG of each picture and editable text, each in its place. |
 | Master page pictures | Exported in stage 1. |
 | Filled box | A filled rectangle. |
 | Table | A rectangle for each cell's fill and for each cell border, plus a text box for each cell's text. Cell content is centred vertically unless the cell says otherwise, as in Publisher. |
@@ -120,8 +121,12 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   higher or lower than in Publisher.
 - **Image types:** images in other formats (such as Publisher's `.wmz` files) are skipped,
   with a warning.
-- **`-HiRes` matching:** a 300 dpi PNG replaces a web image only when the counts on the page
-  agree and the aspect ratios match. Otherwise the web image is kept, with a warning.
+- **`-HiRes` matching:** with `_pictures.json`, a 300 dpi PNG replaces the web image in the
+  same place and of the same size and shape, and an image with none (WordArt, or a shape
+  Publisher exports as a picture) stays web quality. Without it, the PNGs replace the web
+  images in order, only when the counts on the page agree and the aspect ratios match;
+  otherwise the web images are kept, with a warning. Re-run stage 1 on an existing export
+  to add the file.
 - **Tabs without `_text.json`:** Publisher's HTML export writes tabs as runs of spaces.
   A run that ends within two spaces of a default tab stop (every half inch) becomes a tab
   again, in left-aligned paragraphs only, and custom tab stops are lost. Re-run stage 1
@@ -133,7 +138,8 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   space after is made up in the next. Without the file, positions are estimated from the HTML.
 - **Shapes and WordArt:** only what Publisher's HTML export writes out comes through. A
   shape or WordArt the export doesn't write out is missing from the slide.
-- **Text boxes exported as pictures:** a text box inside a group, a rotated one, WordArt, or
+- **Text boxes exported as pictures:** a text box in a group that also holds a shape, a
+  rotated one, WordArt, or
   one whose outline PowerPoint has no preset for (a star or cloud, for instance) stays a
   picture. Without `_text.json`, a rebuilt text box that Publisher aligns to the
   bottom or middle starts at the top instead.
