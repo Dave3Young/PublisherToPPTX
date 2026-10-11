@@ -905,6 +905,24 @@ def _split_lines(runs: list) -> list:
     return lines
 
 
+def _pub_tracking(p: "Para", rec: dict):
+    """Publisher's tracking, which the HTML export leaves out, as letter
+    spacing on the runs that have none. Tracking is a percentage: each
+    point over 100 adds about a two-hundredth of the font size after
+    every character."""
+    try:
+        tracking = float(rec.get("tracking") or 100.0)
+    except (TypeError, ValueError):
+        return
+    # a paragraph with mixed tracking reports nonsense
+    if not 0.0 < tracking <= 1000.0 or abs(tracking - 100.0) < 0.5:
+        return
+    for run in p.runs:
+        size = run.size_pt or float(rec.get("size") or 0.0)
+        if run.spacing_pt is None and size > 0:
+            run.spacing_pt = (tracking - 100.0) / 200.0 * size
+
+
 def _pub_wrap_indents(para) -> list:
     """Moves the lines Publisher wraps around a picture or another frame to
     where stage 1 saw them start (lineLefts). PowerPoint has no indent for a
@@ -1372,6 +1390,7 @@ class Converter:
                 # Publisher's indents: the HTML leaves out hanging ones
                 p.left_indent_pt = max(float(rec.get("leftIndent") or 0.0), 0.0)
                 p.indent_pt = max(float(rec.get("firstIndent") or 0.0), -p.left_indent_pt)
+                _pub_tracking(p, rec)
             elif p.align in (None, PP_ALIGN.LEFT):
                 self._restore_tabs(p)
             if bullet_runs:
@@ -1715,6 +1734,9 @@ class Converter:
         if h and sum(row_h) < h * 0.92:
             pass  # declared container taller than the content: leave rows compact
         boxes = []
+        # each cell's borders by edge, drawn once over all the cell fills
+        edges: dict = {}
+        table_box = (x, y, sum(col_w), sum(row_h))
         cy = y
         for ri, per_row in enumerate(cell_paras):
             for cell, cs, paras, ci, cw in per_row:
@@ -1724,7 +1746,7 @@ class Converter:
                     self.order += 1
                     boxes.append(Box(kind="rect", x=cx, y=cy, w=cw, h=row_h[ri],
                                      fill=fill, order=self.order, note="table cell fill"))
-                boxes.extend(self._cell_borders(cs, cx, cy, cw, row_h[ri]))
+                self._cell_borders(cs, cx, cy, cw, row_h[ri], table_box, edges)
                 # HTML centres cell content vertically unless told otherwise,
                 # and Publisher's export relies on that
                 valign = str(cs.get("vertical-align") or cell.get("valign")
@@ -1786,12 +1808,18 @@ class Converter:
                                          paras=paras, order=self.order, note="table cell",
                                          anchor=valign))
             cy += row_h[ri]
+        for _, box in edges.values():
+            self.order += 1
+            box.order = self.order
+            boxes.append(box)
         return boxes, cy - y
 
-    def _cell_borders(self, style: dict, x, y, w, h) -> list:
-        """A table cell's borders, each a thin filled rectangle centred on
-        the cell's edge, as Publisher's collapsed borders are."""
-        out = []
+    def _cell_borders(self, style: dict, x, y, w, h, table_box, edges: dict):
+        """Adds a table cell's borders to edges, each (width, box) keyed by
+        the edge it is on. Publisher collapses the borders of two
+        cells that share an edge into one, the wider, centred on the edge,
+        and draws those on the table's outside edges inside the table."""
+        tx, ty, tw, th = table_box
         for side in ("top", "bottom", "left", "right"):
             val = style.get(f"border-{side}") or style.get("border")
             if not val:
@@ -1813,14 +1841,32 @@ class Converter:
             color = color if color is not None else RGBColor(0, 0, 0)
             if side in ("top", "bottom"):
                 ey = y if side == "top" else y + h
-                rect = (x - width / 2, ey - width / 2, w + width, width)
+                if abs(ey - ty) < 0.5:
+                    top = ty
+                elif abs(ey - (ty + th)) < 0.5:
+                    top = ty + th - width
+                else:
+                    top = ey - width / 2
+                left = max(x - width / 2, tx)
+                rect = (left, top, min(x + w + width / 2, tx + tw) - left, width)
+                key = ("h", round(ey * 2), round(x * 2), round((x + w) * 2))
             else:
                 ex = x if side == "left" else x + w
-                rect = (ex - width / 2, y - width / 2, width, h + width)
-            self.order += 1
-            out.append(Box(kind="rect", x=rect[0], y=rect[1], w=rect[2], h=rect[3],
-                           fill=color, order=self.order, note="table cell border"))
-        return out
+                if abs(ex - tx) < 0.5:
+                    left = tx
+                elif abs(ex - (tx + tw)) < 0.5:
+                    left = tx + tw - width
+                else:
+                    left = ex - width / 2
+                top = max(y - width / 2, ty)
+                rect = (left, top, width, min(y + h + width / 2, ty + th) - top)
+                key = ("v", round(ex * 2), round(y * 2), round((y + h) * 2))
+            seen = edges.get(key)
+            if seen is not None and seen[0] >= width:
+                continue
+            box = Box(kind="rect", x=rect[0], y=rect[1], w=rect[2], h=rect[3],
+                      fill=color, order=0, note="table cell border")
+            edges[key] = (width, box)
 
     def _wrapper_padding(self, cell: Tag, sheet: StyleSheet, style: dict, cw: float) -> list:
         """Padding (left, top, right, bottom px) of the divs that wrap all of a

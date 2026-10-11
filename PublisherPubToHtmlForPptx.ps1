@@ -447,6 +447,7 @@ function Get-PublisherParagraphs
                 lineRule    = [int]$format.LineSpacingRule
                 font        = [string]$para.Font.Name
                 size        = [double]$para.Font.Size
+                tracking    = [double]$para.Font.Tracking
                 tabs        = $tabs
             })
         }
