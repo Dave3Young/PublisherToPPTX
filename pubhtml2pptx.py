@@ -1334,7 +1334,8 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
     spacing and line isn't a measured pitch of text of one size; then the
     font's, any further height being below the text. For a larger multiple
     of the font's own single spacing, from where Publisher puts the first
-    baseline at single spacing, which it keeps."""
+    baseline at single spacing, which it keeps, where PowerPoint's spacing
+    is above 100% and its baseline the same for every font."""
     if size <= 0:
         return None
     pct = pct or line / (1.2 * size)
@@ -1350,7 +1351,7 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
     single = pub_single_spacing(font, bold, italic)
     first = pub_first_baseline(font, bold, italic)
     m = _font_metrics(font, bold, italic)
-    if multiple > 1.0 and single and first is not None and abs(ratio / single - 1.0) <= 0.03:
+    if multiple > 1.0 and pct > 1.0 and single and first is not None and abs(ratio / single - 1.0) <= 0.03:
         lift = (ppt_first_baseline(pct) - first) * size
     else:
         lift = (ppt_first_baseline(pct) - ppt_first_baseline(ratio / 1.2)) * size
