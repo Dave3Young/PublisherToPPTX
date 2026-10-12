@@ -835,6 +835,82 @@ def load_pub_inline(export_dir: str, base: str) -> Optional[list]:
     return boxes
 
 
+def _pub_shape_text(shape: dict) -> str:
+    pars = list(shape.get("paragraphs") or [])
+    for cell in shape.get("cells") or []:
+        pars += cell.get("paragraphs") or []
+    text = "".join(str(par.get("text", "")) for par in pars)
+    return " ".join(text.replace(OBJECT_CHAR, " ").split())
+
+
+def _pub_text_lines(shape: dict) -> list:
+    """The (left, top, right, bottom) of each line of text stage 1 measured
+    in a shape, in pt, leaving out blank paragraphs."""
+    out = []
+    for par in shape.get("paragraphs") or []:
+        if not str(par.get("text", "")).replace(OBJECT_CHAR, "").strip():
+            continue
+        tops, lefts = par.get("lineTops") or [], par.get("lineLefts") or []
+        widths = par.get("lineWidths") or []
+        try:
+            end = float(par["top"]) + float(par["height"]) - float(par.get("spaceAfter") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        for i, top in enumerate(tops):
+            if i >= len(lefts) or i >= len(widths) or not widths[i]:
+                continue
+            bottom = tops[i + 1] if i + 1 < len(tops) else end
+            out.append((lefts[i], top, lefts[i] + widths[i], bottom))
+    return out
+
+
+def check_pub_inline(export_dir: str, base: str, page_in: Optional[tuple], warn):
+    """Warns about inline text boxes that run off the page or lie on another
+    shape's text. Publisher reports where an inline box is but can draw its
+    text elsewhere, often over the text around it, so such a box is usually
+    leftover text in the source to clean up."""
+    path = os.path.join(export_dir, base + "_text.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return
+    shapes = [s for s in data.get("shapes", [])
+              if all(isinstance(s.get(k), (int, float)) for k in ("left", "top", "width", "height"))]
+    parents = {(s.get("page"), s.get("name")): s.get("parent") for s in shapes}
+    for shape in shapes:
+        text = _pub_shape_text(shape) if shape.get("inline") else ""
+        if not text:
+            continue
+        page = shape.get("page")
+        l, t = shape["left"], shape["top"]
+        r, b = l + shape["width"], t + shape["height"]
+        lines = _pub_text_lines(shape)
+        problems = []
+        if page_in and any(x1 > page_in[0] * 72 + 6 or y1 > page_in[1] * 72 + 6
+                           or x0 < -6 or y0 < -6 for x0, y0, x1, y1 in lines or [(l, t, r, b)]):
+            problems.append("runs off the page")
+        # an unmeasured box's text runs across the whole box but may stop
+        # anywhere down it: only its first line is sure to be there
+        own = lines or [(l, t, r, min(b, t + 14))]
+        ancestors, up = set(), shape.get("parent")
+        while up and up not in ancestors:
+            ancestors.add(up)
+            up = parents.get((page, up))
+        for other in shapes:
+            if other is shape or other.get("page") != page or other.get("name") in ancestors \
+                    or other.get("parent") == shape.get("name"):
+                continue
+            if any(min(r1, x1) - max(l1, x0) > 3 and min(b1, y1) - max(t1, y0) > 3
+                   for x0, y0, x1, y1 in _pub_text_lines(other) for l1, t1, r1, b1 in own):
+                problems.append(f"lies on the text of {other.get('name')!r} "
+                                f"({_pub_shape_text(other)[:30]!r})")
+        if problems:
+            warn(f"page {page}: inline text box {shape.get('name')!r} ({text[:40]!r}) "
+                 f"{' and '.join(problems)}; Publisher may draw its text somewhere else "
+                 f"or over other text, so check it in the source")
+
+
 def pub_words_and_gaps(text: str):
     """A paragraph's words (pictures count as words) and the whitespace
     before each word, keyed by word index; the key len(words) is trailing."""
@@ -3536,6 +3612,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     conv.pub_text = load_pub_text(export_dir, base)
     conv.pub_blank_frames = load_pub_frames(export_dir, base)
     conv.pub_inline = load_pub_inline(export_dir, base)
+    check_pub_inline(export_dir, base, real_page, warn)
     pub_pictures = load_pub_pictures(export_dir, base)
 
     prs = Presentation()
