@@ -3362,10 +3362,31 @@ def _line_tightening(para, width_pt: float) -> dict:
     return out
 
 
-def build_slide(prs, boxes, resolver, dpi, warn, verbose):
+def scale_slide(slide, s: float):
+    """Shrink everything on a slide by s: positions and sizes, and the
+    point sizes of text, spacing, indents, tabs and outlines."""
+    emu_attrs = {qn("a:off"): ("x", "y"), qn("a:ext"): ("cx", "cy"),
+                 qn("a:pPr"): ("marL", "marR", "indent", "defTabSz"),
+                 qn("a:tab"): ("pos",), qn("a:ln"): ("w",)}
+    for el in slide.shapes._spTree.iter():
+        names = emu_attrs.get(el.tag, ())
+        if el.tag in (qn("a:rPr"), qn("a:endParaRPr")):
+            names = ("sz", "spc")
+        elif el.tag == qn("a:spcPts"):
+            names = ("val",)
+        for name in names:
+            v = el.get(name)
+            if v is not None:
+                v = int(round(int(v) * s))
+                # PowerPoint's smallest font size is 1pt
+                el.set(name, str(max(v, 100) if name == "sz" else v))
+
+
+def build_slide(prs, boxes, resolver, dpi, warn, verbose, scale=1.0):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    sw_px = prs.slide_width / EMU_PER_INCH * dpi
-    sh_px = prs.slide_height / EMU_PER_INCH * dpi
+    # the page before scale_slide shrinks it to fit
+    sw_px = prs.slide_width / EMU_PER_INCH * dpi / scale
+    sh_px = prs.slide_height / EMU_PER_INCH * dpi / scale
 
     for b in sorted(boxes, key=lambda z: (z.z or 0, z.order)):
         w = max(b.w or 1.0, 1.0)
@@ -3508,6 +3529,8 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose):
         if verbose:
             print(f"    text  {int(b.x):>5},{int(b.y):>5}  {int(w):>4}x{int(h):<4}  "
                   f"{b.paras[0].text()[:40]!r}" if b.paras else "")
+    if scale != 1.0:
+        scale_slide(slide, scale)
     return slide
 
 
@@ -3676,8 +3699,15 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     # one deck-wide slide size: PowerPoint/Canva allow only one
     page_w = max(p[0] for p in slide_pages)
     page_h = max(p[1] for p in slide_pages)
-    w_in = min(max(page_w / dpi, 1.0), PPTX_MAX_IN)
-    h_in = min(max(page_h / dpi, 1.0), PPTX_MAX_IN)
+    w_in = max(page_w / dpi, 1.0)
+    h_in = max(page_h / dpi, 1.0)
+    # a page larger than PowerPoint's 56in limit (a banner) is shrunk to
+    # fit, keeping its shape, rather than cut off
+    scale = min(1.0, PPTX_MAX_IN / w_in, PPTX_MAX_IN / h_in)
+    if scale < 1.0:
+        warn(f"page is {w_in:.2f} x {h_in:.2f} in, larger than PowerPoint's "
+             f"{PPTX_MAX_IN:.0f} in limit; the slide is scaled to {scale:.0%}")
+        w_in, h_in = min(w_in * scale, PPTX_MAX_IN), min(h_in * scale, PPTX_MAX_IN)
     prs.slide_width = Emu(int(round(w_in * EMU_PER_INCH)))
     prs.slide_height = Emu(int(round(h_in * EMU_PER_INCH)))
     sizes = {(round(p[0]), round(p[1])) for p in slide_pages}
@@ -3690,7 +3720,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
             apply_hires(boxes, export_dir, base, idx, resolver, warn, dpi)
         if args.verbose:
             print(f"  page {idx}: {len(boxes)} shapes  ({pw/dpi:.2f} x {ph/dpi:.2f} in)")
-        build_slide(prs, boxes, resolver, dpi, warn, args.verbose)
+        build_slide(prs, boxes, resolver, dpi, warn, args.verbose, scale)
 
     extra = 0
     if not args.no_extras:
