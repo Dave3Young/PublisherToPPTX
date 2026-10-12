@@ -2142,9 +2142,6 @@ class Converter:
                                   f"overflow, which Publisher hides")
                     boxes.extend(kept)
                 elif paras:
-                    paras = self.collect_paras(cell, sheet, cs, stop_nodes,
-                                               region=(cx, cy, cx + cw, cy + row_h[ri]))
-                    where = self._pub_place(paras, bottom=cy + row_h[ri])
                     # the cell's own padding, else the table's cellpadding,
                     # plus that of the text box's <div class=shape> inside it
                     pl, pt_, pr, pb = (
@@ -2152,6 +2149,12 @@ class Converter:
                             (to_px(cs.get("padding-" + side), self.dpi, cw)
                              for side in ("left", "top", "right", "bottom")),
                             self._wrapper_padding(cell, sheet, cs, cw)))
+                    # (each frame of a linked story records all its text, so
+                    # a record's own frame may be another one's)
+                    paras = self.collect_paras(cell, sheet, cs, stop_nodes,
+                                               region=(cx, cy, cx + cw, cy + row_h[ri]),
+                                               text_area=(cx + pl, cx + max(cw - pr, pl + 8.0)))
+                    where = self._pub_place(paras, bottom=cy + row_h[ri])
                     self.order += 1
                     if where:
                         top, _ = where
