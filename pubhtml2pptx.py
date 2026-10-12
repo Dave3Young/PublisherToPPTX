@@ -1287,12 +1287,21 @@ def _pub_wrap_indents(para) -> list:
     return out
 
 
-# PowerPoint can set text up to about 2% wider than Publisher (it varies with
-# the font and size), so a line Publisher just fits would wrap again before its
-# break. Lines measuring within this share of the width are tightened to fit,
-# by at most KEEP_LINES_MAX_SPC of the font size per character.
+# PowerPoint can set small text up to about 2% wider than Publisher (it varies
+# with the font and size: hinting rounds each letter's width), so a line
+# Publisher just fits would wrap again before its break. Lines measuring within
+# this share of the width are tightened to fit, by at most KEEP_LINES_MAX_SPC
+# of the font size per character. From KEEP_LINES_LARGE_PT up PowerPoint wraps
+# within half a percent of the measured width, and the full share would squeeze
+# a large heading visibly narrower than Publisher sets it.
 KEEP_LINES_SLACK = 0.025
+KEEP_LINES_SLACK_LARGE = 0.01
+KEEP_LINES_LARGE_PT = 20.0
 KEEP_LINES_MAX_SPC = 0.05
+
+
+def _keep_lines_slack(size_pt: float) -> float:
+    return KEEP_LINES_SLACK if size_pt < KEEP_LINES_LARGE_PT else KEEP_LINES_SLACK_LARGE
 
 _SPACE_RUN_RE = re.compile(" {8,}")
 
@@ -3662,7 +3671,8 @@ def _line_tightening(para, width_pt: float) -> dict:
                     x = next_tab_px(x, stops, TAB_STOP_PT)
                     chars = 0
                 x += (text_width_px(seg, run.font, run.size_pt or 12.0, bool(run.bold),
-                                    bool(run.italic)) * (1.0 + KEEP_LINES_SLACK)
+                                    bool(run.italic))
+                      * (1.0 + _keep_lines_slack(run.size_pt or 12.0))
                       + (run.spacing_pt or 0.0) * len(seg))
                 chars += len(seg)
         pub_line = pub_text[cuts[i]:cuts[i + 1]].rstrip("\r\v\n") if pub_widths else ""
@@ -3674,7 +3684,8 @@ def _line_tightening(para, width_pt: float) -> dict:
             pub_w = float(pub_widths[i]) - text_width_px(trail, run.font, run.size_pt or 12.0,
                                                          bool(run.bold), bool(run.italic))
             lead = para.left_indent_pt + (para.indent_pt if i == 0 else 0.0)
-            x = max(x, lead + pub_w * (1.0 + KEEP_LINES_SLACK))
+            size = max((run.size_pt or 12.0) for run, _ in pieces)
+            x = max(x, lead + pub_w * (1.0 + _keep_lines_slack(size)))
         need = x - width_pt
         if need > 0 and chars:
             size = max((run.size_pt or 12.0) for run, _ in pieces)
