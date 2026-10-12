@@ -2012,6 +2012,11 @@ class Converter:
         cells that share an edge into one, the wider, centred on the edge,
         and draws those on the table's outside edges inside the table."""
         tx, ty, tw, th = table_box
+        pen = to_px(style.get("x-pen-inset"), self.dpi) or 0.0
+        if pen and w > 4 * pen and h > 4 * pen:
+            # a shape's outline, which Publisher draws inside the shape
+            x, y, w, h = x + pen, y + pen, w - 2 * pen, h - 2 * pen
+            tx, ty, tw, th = tx + pen, ty + pen, tw - 2 * pen, th - 2 * pen
         for side in ("top", "bottom", "left", "right"):
             val = style.get(f"border-{side}") or style.get("border")
             if not val:
@@ -2602,8 +2607,11 @@ class Converter:
         # a rebuilt VML text box or picture says which outline shape it had
         adj = tuple(float(v) for v in str(style.get("x-adj") or "").split())
         if (fill is not None or border is not None) and w and h:
+            # PowerPoint centres the line on the edge; Publisher drew it inside
+            pen = min(to_px(style.get("x-pen-inset"), self.dpi) or 0.0, w / 4, h / 4)
             self.order += 1
-            boxes.append(Box(kind="rect", x=x, y=y, w=w, h=h, fill=fill,
+            boxes.append(Box(kind="rect", x=x + pen, y=y + pen, w=w - 2 * pen, h=h - 2 * pen,
+                             fill=fill,
                              line=border, line_w_px=border_w, order=self.order,
                              geom=style.get("x-geom") or "rect", adj=adj,
                              dash=style.get("x-dash"),
@@ -2911,6 +2919,8 @@ def _vml_box_styles(shape: Tag, decl: dict, box: Tag, outline: tuple,
             and str((stroke or {}).get("on", "t")).lower() not in ("f", "false")):
         color = (str(shape.get("strokecolor") or "black").split() or ["black"])[0]
         styles.append(f"border:{_vml_pt(shape.get('strokeweight'), 0.75):.2f}pt solid {color}")
+        if _vml_inset_pen(shape):
+            styles.append(f"x-pen-inset:{_vml_inset_pen(shape):.2f}pt")
         dash = str((stroke or {}).get("dashstyle") or "").lower()
         if dash and dash != "solid":
             styles.append(f"x-dash:{dash}")
@@ -2986,6 +2996,37 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
 
 
 VML_SHAPES = ["v:shape", "v:rect", "v:roundrect", "v:oval"]
+
+
+def _vml_inset_pen(shape: Tag) -> float:
+    """Half the outline weight (pt) of a shape whose outline Publisher draws
+    inside its edge (insetpen), else 0."""
+    stroke = shape.find("v:stroke", recursive=False)
+    if (str(shape.get("insetpen", "")).lower() not in ("t", "true")
+            or str(shape.get("stroked", "t")).lower() in ("f", "false")
+            or str((stroke or {}).get("on", "t")).lower() in ("f", "false")):
+        return 0.0
+    return _vml_pt(shape.get("strokeweight"), 0.75) / 2
+
+
+def mark_inset_pens(soup: BeautifulSoup) -> int:
+    """Publisher draws a shape's outline inside its edge, but its HTML gives
+    the table cell standing in for the shape a border centred on that edge,
+    half the outline wider all round. Marks each such cell with x-pen-inset,
+    how far in to draw it. Returns how many were marked."""
+    inset = {}
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
+        for shape in BeautifulSoup(str(c), "html.parser").find_all(VML_SHAPES):
+            if not shape.find_parent("v:group") and _vml_inset_pen(shape):
+                inset[shape.get("id")] = _vml_inset_pen(shape)
+    count = 0
+    for div in soup.find_all(attrs={"v:shape": True}):
+        half = inset.get(div.get("v:shape"))
+        td = div.find_parent("td")
+        if half and td is not None and "border" in str(td.get("style", "")):
+            td["style"] = str(td.get("style", "")).rstrip("; ") + f";x-pen-inset:{half:.2f}pt"
+            count += 1
+    return count
 
 
 def _vml_group_parts(group: Tag, pics: list) -> Optional[list]:
@@ -3734,6 +3775,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         with open(html_path, "rb") as fh:
             raw = fh.read()
         soup = BeautifulSoup(drop_downlevel_fallbacks(raw), "lxml")
+        mark_inset_pens(soup)
         restore_vml_text_boxes(soup)
         restore_vml_groups(soup, pub_pictures, len(slide_pages) + 1)
         conv.inline_boxes = restore_vml_inline_text_boxes(soup)
