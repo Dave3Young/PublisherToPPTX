@@ -3134,10 +3134,11 @@ def restore_vml_inline_text_boxes(soup: BeautifulSoup) -> dict:
 
 
 def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
-                         default_h: Optional[float] = None):
+                         default_h: Optional[float] = None,
+                         default_w: Optional[float] = None):
     """Publisher wraps each page in a sized, positioned div. Find them.
-    Publisher sometimes writes a malformed height ('10.-1737in') on that
-    div; default_h (px) stands in for it."""
+    Publisher sometimes writes a malformed height ('10.-1737in') or width
+    ('4.-2040in') on that div; default_h and default_w (px) stand in."""
     body = soup.body or soup
     candidates = []
     for el in body.find_all(["div", "table", "section"]):
@@ -3148,6 +3149,10 @@ def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
         wrapper = el.name == "div" and el.parent is body and is_positioned(st)
         if not h and default_h and wrapper and st.get("height"):
             h = default_h
+        # without its width the wrapper is skipped, and a large table on
+        # the page is taken for the page instead
+        if not w and default_w and wrapper and st.get("width"):
+            w = default_w
         if not w or not h or ((w < 200 or h < 200) and not wrapper):
             continue
         # must not be nested inside another candidate
@@ -3700,7 +3705,8 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         body = soup.body or soup
         body_style = computed_style(body, sheet, {}) if isinstance(body, Tag) else {}
         pages = find_page_containers(soup, sheet, dpi,
-                                     (real_page or fallback)[1] * dpi)
+                                     (real_page or fallback)[1] * dpi,
+                                     (real_page or fallback)[0] * dpi)
 
         resolver.html_dir = os.path.dirname(html_path)
 
