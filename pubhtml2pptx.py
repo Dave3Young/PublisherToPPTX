@@ -388,6 +388,7 @@ class Para:
     tab_stops: list = field(default_factory=list)    # [(pos_pt, PbTabAlignmentType)]
     pub: Optional[dict] = None        # stage 1's record for this paragraph
     pub_placed: bool = False          # pub was found at this paragraph's place
+    best_fit: bool = False            # at Publisher's best-fit size, not the export's
     exact_line_pt: Optional[float] = None
     line_multiple: Optional[float] = None   # PowerPoint's, for lines of mixed sizes
 
@@ -1057,10 +1058,35 @@ def _split_lines(runs: list) -> list:
     return lines
 
 
+# The HTML export writes best-fit text at this fraction of the size
+# Publisher fits it to
+BEST_FIT_EXPORT = 0.95
+
+
+def _pub_best_fit(p: "Para", rec: dict):
+    """Publisher's size for best-fit text, which the HTML export writes 5%
+    smaller. Only a paragraph all one size (rec's size is negative when it
+    mixes sizes) and exactly 95% of Publisher's in the HTML is changed."""
+    try:
+        size = float(rec.get("size") or 0.0)
+    except (TypeError, ValueError):
+        return
+    sizes = {r.size_pt for r in p.runs if r.size_pt and r.text.strip()}
+    if size <= 0 or len(sizes) != 1:
+        return
+    html = sizes.pop()
+    if abs(html / size - BEST_FIT_EXPORT) > 0.0015:
+        return
+    for run in p.runs:
+        if run.size_pt:
+            run.size_pt = round(run.size_pt * size / html, 2)
+    p.best_fit = True
+
+
 def _pub_tracking(p: "Para", rec: dict):
     """Publisher's tracking, which the HTML export leaves out, as letter
     spacing on the runs that have none. Tracking is a percentage: each
-    point over 100 adds about a two-hundredth of the font size after
+    point over 100 adds about a 250th of the font size after
     every character."""
     try:
         tracking = float(rec.get("tracking") or 100.0)
@@ -1072,7 +1098,19 @@ def _pub_tracking(p: "Para", rec: dict):
     for run in p.runs:
         size = run.size_pt or float(rec.get("size") or 0.0)
         if run.spacing_pt is None and size > 0:
-            run.spacing_pt = (tracking - 100.0) / 200.0 * size
+            run.spacing_pt = (tracking - 100.0) / 250.0 * size
+
+
+def _line_width_pt(line: list) -> float:
+    """An estimate of a line's width, without the spaces at its end."""
+    width = 0.0
+    for r in line:
+        piece = r.text.rstrip() if r is line[-1] else r.text
+        if r.caps:
+            piece = piece.upper()
+        width += (text_width_px(piece, r.font, r.size_pt or 12.0, bool(r.bold), bool(r.italic))
+                  + (r.spacing_pt or 0.0) * len(piece))
+    return width
 
 
 def _pub_wrap_indents(para) -> list:
@@ -1107,23 +1145,22 @@ def _pub_wrap_indents(para) -> list:
             pub_line = pub_text[cuts[j]:cuts[j + 1]] if j + 1 < len(cuts) else ""
             # a line's bounds run over a run of spaces at its end, out to
             # the frame's edge, though Publisher aligns only what shows
+            est = _line_width_pt(line)
+            # only an estimate, so only a clear shift counts
+            est_tol = max(WRAP_SHIFT_PT, 0.05 * est)
             if widths and len(pub_line) - len(pub_line.rstrip()) < 2:
                 width = widths[j]
                 tol = WRAP_SHIFT_PT
             else:
-                width = 0.0
-                for r in line:
-                    piece = r.text.rstrip() if r is line[-1] else r.text
-                    if r.caps:
-                        piece = piece.upper()
-                    width += (text_width_px(piece, r.font, r.size_pt or 12.0, bool(r.bold),
-                                            bool(r.italic))
-                              + (r.spacing_pt or 0.0) * len(piece))
-                # only an estimate, so only a clear shift counts
-                tol = max(WRAP_SHIFT_PT, 0.05 * width)
+                width, tol = est, est_tol
             area_l, area_r = fl + lead, fr - float(rec.get("rightIndent") or 0.0)
             if align == 1:
                 s = x + width / 2 - (area_l + area_r) / 2
+                # the last line of a big heading can measure half its size
+                # too wide on the right, though Publisher centres what shows:
+                # a line that starts where a centred one would is not shifted
+                if abs(s) > tol and abs(x + est / 2 - (area_l + area_r) / 2) <= est_tol:
+                    s = 0.0
                 shifts.append((2 * s, 0.0) if s > tol else (0.0, -2 * s) if s < -tol
                               else (0.0, 0.0))
             else:
@@ -1550,6 +1587,7 @@ class Converter:
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
                 p.pub, p.pub_placed = rec, placed
+                _pub_best_fit(p, rec)
                 p.bullet = bool(bullet_runs)
                 p.keep_lines = self.keep_lines and _pub_line_breaks(p, rec)
                 if not p.keep_lines:
@@ -3467,6 +3505,15 @@ def _line_tightening(para, width_pt: float) -> dict:
                 lines.append([])
             lines[-1].append((run, piece))
     stops = sorted(pos for pos, _ in para.tab_stops)
+    # Publisher's own widths, where its lines are these lines, for text it
+    # fits to its box: PowerPoint sets some wider than the estimate, as
+    # Publisher measures it
+    rec = (para.pub or {}) if para.best_fit else {}
+    pub_widths = rec.get("lineWidths") or []
+    pub_text = str(rec.get("text", ""))
+    cuts = [_utf16_index(pub_text, c) for c in rec.get("lineStarts") or []] + [len(pub_text)]
+    if len(pub_widths) != len(lines) or len(cuts) != len(lines) + 1:
+        pub_widths = []
     out = {}
     for i, pieces in enumerate(lines):
         # where the line ends, with PowerPoint's extra width, following tabs
@@ -3484,6 +3531,16 @@ def _line_tightening(para, width_pt: float) -> dict:
                                     bool(run.italic)) * (1.0 + KEEP_LINES_SLACK)
                       + (run.spacing_pt or 0.0) * len(seg))
                 chars += len(seg)
+        pub_line = pub_text[cuts[i]:cuts[i + 1]].rstrip("\r\v\n") if pub_widths else ""
+        trail = pub_line[len(pub_line.rstrip(" \xa0")):]
+        # a line's bounds take in the space it wraps at (and run over a run
+        # of spaces out to the frame's edge)
+        if pub_line.strip() and "\t" not in pub_line and len(trail) < 2 and pieces:
+            run = pieces[-1][0]
+            pub_w = float(pub_widths[i]) - text_width_px(trail, run.font, run.size_pt or 12.0,
+                                                         bool(run.bold), bool(run.italic))
+            lead = para.left_indent_pt + (para.indent_pt if i == 0 else 0.0)
+            x = max(x, lead + pub_w * (1.0 + KEEP_LINES_SLACK))
         need = x - width_pt
         if need > 0 and chars:
             size = max((run.size_pt or 12.0) for run, _ in pieces)
