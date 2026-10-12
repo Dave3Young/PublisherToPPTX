@@ -893,6 +893,26 @@ def load_pub_frames(export_dir: str, base: str) -> list:
     return frames
 
 
+def load_pub_tables(export_dir: str, base: str) -> list:
+    """Stage 1's tables: (page, left, top, width, height) in pt."""
+    path = os.path.join(export_dir, base + "_text.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    tables = []
+    for shape in data.get("shapes", []):
+        if not shape.get("cells"):
+            continue
+        try:
+            tables.append((int(shape.get("page", 0)), float(shape["left"]), float(shape["top"]),
+                           float(shape["width"]), float(shape["height"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tables
+
+
 def load_pub_inline(export_dir: str, base: str) -> Optional[list]:
     """Stage 1's inline text boxes: where Publisher puts each one, in pt, with
     its text's pub_key (inline pictures left out) to match the HTML's copy,
@@ -1565,6 +1585,7 @@ class Converter:
         self.pub_claimed: set = set()     # ids of records already placed
         # stage 1's text frames showing no text, and the page being walked
         self.pub_blank_frames: list = []
+        self.pub_tables: list = []         # stage 1's tables (page, left, top, w, h), pt
         self.hide_text = 0                # inside such a frame: no paragraphs
         self.pub_overflowed = False       # the paragraphs just placed end the frame's text
         self.page = 1
@@ -2044,6 +2065,16 @@ class Converter:
         rows = [tr for tr in table.find_all("tr") if tr.find(["td", "th"])]
         if not rows:
             return [], 0.0
+        # a table in a group: the export's wrapper can be off from where
+        # Publisher puts it, which stage 1 recorded
+        tw_, th_ = to_px(table.get("width"), self.dpi), to_px(table.get("height"), self.dpi)
+        k = self.dpi / 72.0
+        for page, left, top, width, height in self.pub_tables:
+            if (page == self.page and tw_ and th_ and abs(width * k - tw_) <= 2.0
+                    and abs(height * k - th_) <= 2.0 and abs(top * k - y) <= 3.0
+                    and 1.0 < abs(left * k - x) <= 0.25 * tw_):
+                x, y = left * k, top * k
+                break
 
         pad = to_px(table.get("cellpadding"), self.dpi)
         pad = 2.0 if pad is None else pad
@@ -3976,6 +4007,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     conv = Converter(args, warn)
     conv.pub_text = load_pub_text(export_dir, base)
     conv.pub_blank_frames = load_pub_frames(export_dir, base)
+    conv.pub_tables = load_pub_tables(export_dir, base)
     conv.pub_inline = load_pub_inline(export_dir, base)
     check_pub_inline(export_dir, base, real_page, warn)
     pub_pictures = load_pub_pictures(export_dir, base)
