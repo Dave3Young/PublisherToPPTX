@@ -696,20 +696,44 @@ def _pub_fill_bounds(shape: dict, pars: list) -> list:
     instead: the top is the first line's, the left the leftmost line's, and
     the bottom the next paragraph's top or, for the last, a line below its
     last line plus its space after. One with a single line and nothing below
-    stays unplaced, and so do lines outside the frame: a linked frame
-    reports its first paragraph with the lines it has in the frame before."""
+    stays unplaced, and so do lines outside the frame. A linked frame reports
+    its first paragraph whole, with the lines it has in the frame before and
+    then, from stage 1's version 2, its own: it keeps only those, and the
+    text from the first of them, which is what the export gives the frame."""
     out = list(pars)
     try:
         fl, ft = float(shape["left"]), float(shape["top"])
         fr, fb = fl + float(shape["width"]), ft + float(shape["height"])
     except (KeyError, TypeError, ValueError):
         return out
+
+    def inside(t, x):
+        return ft - 1.0 <= t <= fb and fl - 1.0 <= x <= fr
+
     for n in range(len(out) - 1, -1, -1):
         par = out[n]
         tops = par.get("lineTops") or []
         lefts = par.get("lineLefts") or []
         if par.get("top") or par.get("left") or par.get("height") or not tops:
             continue
+        starts = par.get("lineStarts") or []
+        if n == 0 and len(lefts) == len(tops) == len(starts) and not inside(tops[0], lefts[0]):
+            j = next((k for k, (t, x) in enumerate(zip(tops, lefts)) if inside(t, x)), None)
+            if j is not None:
+                # the text from the frame's first line (starts count UTF-16 units)
+                text, cut, units = str(par.get("text", "")), 0, 0
+                while cut < len(text) and units < starts[j]:
+                    units += len(text[cut].encode("utf-16-le")) // 2
+                    cut += 1
+                par = dict(par, text=text[cut:], spaceBefore=0.0, firstIndent=0.0,
+                           lineStarts=[s - starts[j] for s in starts[j:]],
+                           lineJumps=[[s - starts[j], x] for s, x in par.get("lineJumps") or []
+                                      if s >= starts[j]])
+                for name in ("lineTops", "lineLefts", "lineWidths"):
+                    values = par.get(name) or []
+                    if len(values) == len(starts):
+                        par[name] = values[j:]
+                tops, lefts = par["lineTops"], par["lineLefts"]
         if not (ft - 1.0 <= tops[0] <= fb and (not lefts or fl - 1.0 <= min(lefts) <= fr)):
             continue
         # a last line of trailing spaces can sit below the frame

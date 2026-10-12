@@ -333,7 +333,12 @@ function Get-PublisherParagraphs
         # The frame's columns: a line that starts the next column is
         # higher up than the one before it, not past the paragraph's end
         [int]
-        $Columns = 1
+        $Columns = 1,
+
+        # A frame that text runs into from a linked one: its bounds
+        # (left, top, right, bottom). Its first paragraph's lines start
+        # in the frame before; they run on here, higher up the page.
+        $LinkedFrame = $null
     )
 
     $paragraphs = New-Object System.Collections.Generic.List[object]
@@ -401,6 +406,16 @@ function Get-PublisherParagraphs
                     $nextColumn = ($Columns -gt 1 -and $lineLefts.Count -gt 0 -and
                                    [double]$line.BoundLeft -gt $lineLefts[$lineLefts.Count - 1] + 18 -and
                                    $lineTop -lt $lineTops[$lineTops.Count - 1] - 1)
+                    # (or the first line in this frame, after the frame before)
+                    if (-not $nextColumn -and $null -ne $LinkedFrame -and $lineTops.Count -gt 0) {
+                        $inFrame = {
+                            param($x, $y)
+                            $x -ge $LinkedFrame[0] - 1 -and $x -le $LinkedFrame[2] -and
+                            $y -ge $LinkedFrame[1] - 1 -and $y -le $LinkedFrame[3]
+                        }
+                        $nextColumn = ((& $inFrame ([double]$line.BoundLeft) $lineTop) -and -not
+                                       (& $inFrame $lineLefts[$lineLefts.Count - 1] $lineTops[$lineTops.Count - 1]))
+                    }
 
                     if ($line.Length -eq 0 -or
                         $line.Start -ge $paraEnd -or
@@ -689,8 +704,17 @@ function Add-PublisherTextFrameFields
     if ($columns -gt 1) {
         $Record.columns = $columns
     }
+    $linked = $null
+    try {
+        if ($frame.HasPreviousLink -eq -1) {
+            $linked = @([double]$Shape.Left, [double]$Shape.Top,
+                        ([double]$Shape.Left + [double]$Shape.Width),
+                        ([double]$Shape.Top + [double]$Shape.Height))
+        }
+    }
+    catch { }
     $Record.paragraphs = (Get-PublisherParagraphs -TextRange $TextRange -NoLineTops:$NoLineTops `
-                              -Obstacles $Obstacles -Columns $columns)
+                              -Obstacles $Obstacles -Columns $columns -LinkedFrame $linked)
 
     # Text that doesn't fit is hidden; the export still writes it.
     $overflowing = $false
