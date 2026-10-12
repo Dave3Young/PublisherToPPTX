@@ -2509,7 +2509,11 @@ class Converter:
         stop_nodes = {id(c) for c in shape_children}
         own_style = inherited if el.name == "body" else computed_style(el, sheet, inherited)
 
+        start = len(boxes)
         self._emit_node(el, sheet, own_style, origin, cb_w, cb_h, boxes, stop_nodes)
+        own = boxes[start:]
+        under = self._shapes_before_picture(el, shape_children) if own else set()
+        below = []
 
         for child in shape_children:
             cstyle = computed_style(child, sheet, own_style)
@@ -2528,6 +2532,8 @@ class Converter:
                                      geom=cstyle.get("x-geom") or "rect", adj=adj))
             else:
                 self.walk(child, sheet, cstyle, (x, y), new_w, new_h, boxes, depth + 1)
+            if id(child) in under:
+                below += boxes[first:]
             # Publisher's stacking order is the z-index, not the order in the file
             try:
                 z = int(str(cstyle.get("z-index") or "").strip())
@@ -2536,6 +2542,39 @@ class Converter:
             for b in boxes[first:]:
                 if b.z is None:
                     b.z = z
+
+        if below:
+            # Publisher writes a group's picture after the members it exported
+            # on their own, which lie beneath it: a group's first child is its
+            # bottom one. Give those members the lower places in the order.
+            orders = sorted(b.order for b in below + own)
+            for b, o in zip(below + own, orders):
+                b.order = o
+
+    def _shapes_before_picture(self, el: Tag, shape_children: list) -> set:
+        """ids of the shape children that are group members stacked beneath
+        every shape in el's own in-flow picture of the group, going by the
+        order of the group's children in the VML."""
+        kids = {id(c) for c in shape_children}
+        order = getattr(self, "vml_order", None) or {}
+
+        def places(node):
+            imgs = [node] if node.name == "img" else node.find_all("img")
+            return [order[s] for i in imgs for s in str(i.get("v:shapes") or "").split()
+                    if s in order]
+
+        pic = next((n for n in el.find_all("img")
+                    if not any(id(p) in kids for p in n.parents)), None)
+        # the picture's first shape is the group itself, ahead of its children
+        drawn = places(pic)[1:] if pic is not None else []
+        if not drawn:
+            return set()
+        under = set()
+        for child in shape_children:
+            mine = places(child)
+            if mine and max(mine) < min(drawn):
+                under.add(id(child))
+        return under
 
     def _emit_node(self, el: Tag, sheet: StyleSheet, style: dict,
                    origin, cb_w, cb_h, boxes: list, stop_nodes: set) -> float:
@@ -3052,6 +3091,16 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
         target.extract()
         count += 1
     return count
+
+
+def vml_shape_order(soup: BeautifulSoup) -> dict:
+    """Each VML shape's id and its place in the file, which within a group
+    is its stacking order, bottom first."""
+    order = {}
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
+        for m in re.finditer(r"<v:(?!shapetype)\w+\s[^>]*?\bid=\"([^\"]+)\"", str(c)):
+            order.setdefault(m[1], len(order))
+    return order
 
 
 def restore_vml_inline_text_boxes(soup: BeautifulSoup) -> dict:
@@ -3689,6 +3738,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         restore_vml_groups(soup, pub_pictures, len(slide_pages) + 1)
         conv.inline_boxes = restore_vml_inline_text_boxes(soup)
         restore_vml_pictures(soup)
+        conv.vml_order = vml_shape_order(soup)
         sheet = StyleSheet()
         for st in soup.find_all("style"):
             sheet.add_css(st.get_text())
