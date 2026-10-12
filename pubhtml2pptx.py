@@ -418,6 +418,8 @@ class Box:
     dash: Optional[str] = None     # rect: a LINE_DASHES key
     round_cap: bool = False        # rect: outline drawn with round line ends
     z: Optional[int] = None        # z-index of the positioned shape it came from
+    columns: int = 1               # text: columns the text flows through
+    column_gap: float = 0.0        # text: space between them
 
 
 # Font files for measuring inline text. ImageFont.truetype finds these in
@@ -670,6 +672,8 @@ def load_pub_text(export_dir: str, base: str) -> dict:
             page = 0
         pars = _pub_fill_bounds(shape, shape.get("paragraphs") or [])
         frame = _pub_text_area(shape, pars)
+        if frame and int(shape.get("columns") or 1) > 1:
+            pars, frame = _pub_unfold_columns(pars, frame, int(shape["columns"]))
         # an inline text box's paragraphs have no position: they're found by
         # the box they're in
         box = f"{page}/{shape.get('name')}" if shape.get("inline") else None
@@ -727,6 +731,64 @@ def _pub_fill_bounds(shape: dict, pars: list) -> list:
         out[n] = dict(par, top=float(tops[0]), height=bottom - float(tops[0]),
                       left=float(min(lefts)) if lefts else None)
     return out
+
+
+def _pub_unfold_columns(pars: list, frame: tuple, n: int):
+    """A frame's text in n columns as if all in its first column, running on
+    down: PowerPoint flows it into columns of its own. Each line moves left
+    by its column's offset, and the first line in each later column comes a
+    line below the last one in the column before, plus the space between
+    the paragraphs where one ends there. Each record keeps where Publisher
+    put it on the page, as at, to be found by. Returns the records and the
+    first column's text area (left, right in pt)."""
+    fl, fr = frame
+    span = (fr - fl) / n
+
+    def col(x):
+        return min(max(int((x - fl + 1.0) // span), 0), n - 1)
+
+    # each column's offset, from its leftmost line
+    base: dict = {}
+    for par in pars:
+        for x in par.get("lineLefts") or []:
+            base[col(x)] = min(base.get(col(x), x), x)
+    if 0 not in base or len(base) < 2:
+        return pars, frame
+    pitch = max((base[k] - base[0]) / k for k in base if k)
+    offset = {k: base[k] - base[0] if k in base else k * pitch for k in range(n)}
+    out = []
+    last = None                  # the line before: (its top, its new top, its column)
+    step, after = None, 0.0      # the line pitch, and space after, of the paragraph before
+    for par in pars:
+        tops, lefts = list(par.get("lineTops") or []), list(par.get("lineLefts") or [])
+        if not tops or len(lefts) != len(tops) or par.get("top") is None:
+            out.append(par)
+            continue
+        size = abs(float(par.get("size") or 0.0)) or 12.0
+        gaps = sorted(b - a for a, b, x, y in zip(tops, tops[1:], lefts, lefts[1:])
+                      if col(x) == col(y) and b > a)
+        own = gaps[len(gaps) // 2] if gaps else (step or 1.2 * size)
+        new = []
+        for i, (t, x) in enumerate(zip(tops, lefts)):
+            if last is None:
+                v = t
+            elif col(x) == last[2]:
+                v = last[1] + t - last[0]
+            elif i == 0:
+                v = last[1] + (step or own) + after + float(par.get("spaceBefore") or 0.0)
+            else:
+                v = last[1] + own
+            new.append(v)
+            last = (t, v, col(x))
+        step, after = own, float(par.get("spaceAfter") or 0.0)
+        top = float(par["top"]) + new[0] - tops[0]
+        height = float(par.get("height") or 0.0)
+        if len({col(x) for x in lefts}) > 1:
+            height = new[-1] + own + after - top
+        moved = [x - offset[col(x)] for x in lefts]
+        out.append(dict(par, top=top, height=height, lineTops=new, lineLefts=moved,
+                        left=min(moved), at=(par.get("left"), par["top"]), columns=n))
+    return out, (fl, fr - (n - 1) * pitch)
 
 
 def _pub_cut(rec: dict, n: int) -> dict:
@@ -1634,14 +1696,14 @@ class Converter:
                     continue
                 if id(rec) in self.pub_claimed or rec.get("page", 0) not in (0, self.page):
                     continue
-                rx = rec["left"] * self.dpi / 72.0
-                ry = rec["top"] * self.dpi / 72.0
+                rx, ry = (v * self.dpi / 72.0 for v in rec.get("at") or (rec["left"], rec["top"]))
                 if not (x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol):
                     continue
                 # a frame lying over a bigger one: its text isn't the bigger
                 # one's (which may hold a hidden copy of it in its overflow)
                 frame = rec.get("frame")
-                if frame and (frame[1] - frame[0]) * self.dpi / 72.0 < 0.6 * (x1 - x0):
+                if frame and ((frame[1] - frame[0]) * (rec.get("columns") or 1)
+                              * self.dpi / 72.0 < 0.6 * (x1 - x0)):
                     continue
                 self.pub_claimed.add(id(rec))
                 return rec, True
@@ -1674,8 +1736,7 @@ class Converter:
                         or rec.get("page", 0) not in (0, self.page)
                         or (len(k) < 20 and not rec.get("overflowAfter"))):
                     continue
-                rx = rec["left"] * self.dpi / 72.0
-                ry = rec["top"] * self.dpi / 72.0
+                rx, ry = (v * self.dpi / 72.0 for v in rec.get("at") or (rec["left"], rec["top"]))
                 if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
                     self.pub_claimed.add(id(rec))
                     return rec, True
@@ -1699,8 +1760,7 @@ class Converter:
                         or id(rec) in self.pub_claimed
                         or rec.get("page", 0) not in (0, self.page)):
                     continue
-                rx = rec["left"] * self.dpi / 72.0
-                ry = rec["top"] * self.dpi / 72.0
+                rx, ry = (v * self.dpi / 72.0 for v in rec.get("at") or (rec["left"], rec["top"]))
                 if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
                     self.pub_claimed.add(id(rec))
                     return _pub_cut(rec, len(key)), True
@@ -2676,6 +2736,12 @@ class Converter:
         content_x = x + pad_l
         content_w = max(w - pad_l - pad_r, 10.0)
         cursor = y + pad_t
+        # text in columns: each line's place is in the first one's, and a
+        # line that would reach into the bottom margin goes on in the next
+        cols = max(int(float(style.get("x-columns") or 1)), 1)
+        col_b = y + h - (to_px(style.get("padding-bottom"), self.dpi, h) or 0.0)
+        gap = (to_px(style.get("x-column-gap"), self.dpi) or 0.0) if cols > 1 else 0.0
+        col_w = max((content_w - (cols - 1) * gap) / cols, 10.0)
 
         segs = self._segments(el, sheet, style, stop_nodes)
         blank = self.pub_blank_frame(x, y, w, h)
@@ -2700,7 +2766,7 @@ class Converter:
             if kind == "text":
                 paras = self.collect_paras(payload, sheet, seg_style, stop_nodes,
                                            region=(x, y, x + w, y + h),
-                                           text_area=(content_x, content_x + content_w))
+                                           text_area=(content_x, content_x + col_w))
                 if not paras:
                     continue
                 self.pub_overflowed = False
@@ -2709,9 +2775,12 @@ class Converter:
                 if where:
                     top, used = where
                     self.order += 1
+                    # (text in columns fills them down to the bottom margin)
                     boxes.append(Box(kind="text", x=content_x, y=top, w=content_w,
-                                     h=max(used, y + h - top if only_text else used, 8.0),
-                                     paras=paras, order=self.order, fixed=True))
+                                     h=(max(col_b - top, 8.0) if cols > 1 else
+                                        max(used, y + h - top if only_text else used, 8.0)),
+                                     paras=paras, order=self.order, fixed=True,
+                                     columns=cols, column_gap=gap))
                     cursor = top + used
                     trailing = 0.0
                     continue
@@ -2722,7 +2791,8 @@ class Converter:
                     box_h = max(est, 8.0)
                 self.order += 1
                 boxes.append(Box(kind="text", x=content_x, y=cursor,
-                                 w=content_w, h=box_h, paras=paras, order=self.order))
+                                 w=content_w, h=box_h, paras=paras, order=self.order,
+                                 columns=cols, column_gap=gap))
                 cursor += est
                 trailing = paras[-1].space_after_pt * self.dpi / 72.0
                 continue
@@ -2946,6 +3016,10 @@ def _vml_box_styles(shape: Tag, decl: dict, box: Tag, outline: tuple,
         f"padding-right:{area[2] + inset[2] + _vml_pt(pad.get('padding-right')):.2f}pt",
         f"padding-bottom:{area[3] + inset[3] + _vml_pt(pad.get('padding-bottom')):.2f}pt",
     ]
+    cols = parse_decls(box.get("style", ""))
+    if int(_vml_pt(cols.get("mso-column-count"), 1.0)) > 1:
+        styles += [f"x-columns:{int(_vml_pt(cols.get('mso-column-count')))}",
+                   f"x-column-gap:{_vml_pt(cols.get('mso-column-margin')):.2f}pt"]
     # VML shapes are filled unless they say otherwise, white by default
     fill = str(shape.get("fillcolor") or "white").split() or ["white"]
     fill_el = shape.find("v:fill", recursive=False)
@@ -3554,7 +3628,7 @@ def scale_slide(slide, s: float):
     point sizes of text, spacing, indents, tabs and outlines."""
     emu_attrs = {qn("a:off"): ("x", "y"), qn("a:ext"): ("cx", "cy"),
                  qn("a:pPr"): ("marL", "marR", "indent", "defTabSz"),
-                 qn("a:tab"): ("pos",), qn("a:ln"): ("w",)}
+                 qn("a:tab"): ("pos",), qn("a:ln"): ("w",), qn("a:bodyPr"): ("spcCol",)}
     for el in slide.shapes._spTree.iter():
         names = emu_attrs.get(el.tag, ())
         if el.tag in (qn("a:rPr"), qn("a:endParaRPr")):
@@ -3632,6 +3706,13 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose, scale=1.0):
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
         tf.vertical_anchor = {"middle": MSO_ANCHOR.MIDDLE,
                               "bottom": MSO_ANCHOR.BOTTOM}.get(b.anchor, MSO_ANCHOR.TOP)
+        # the width a line has: a column's
+        line_w = w
+        if b.columns > 1:
+            body = tf._txBody.bodyPr
+            body.set("numCol", str(b.columns))
+            body.set("spcCol", str(px_to_emu(b.column_gap, dpi)))
+            line_w = (w - (b.columns - 1) * b.column_gap) / b.columns
         # PowerPoint rounds spacing in points to whole points, so each
         # paragraph's rounding is carried into the next one's space after
         carry = 0.0
@@ -3677,7 +3758,7 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose, scale=1.0):
                 carry = want - after
                 if after:
                     p.space_after = Pt(after)
-            tighten = (_line_tightening(para, w * 72.0 / dpi - para.right_indent_pt)
+            tighten = (_line_tightening(para, line_w * 72.0 / dpi - para.right_indent_pt)
                        if para.keep_lines else {})
             line = 0
             for run in para.runs:

@@ -328,7 +328,12 @@ function Get-PublisherParagraphs
 
         # The page's shapes that text wraps around, from
         # Get-PublisherWrapObstacles
-        $Obstacles = @()
+        $Obstacles = @(),
+
+        # The frame's columns: a line that starts the next column is
+        # higher up than the one before it, not past the paragraph's end
+        [int]
+        $Columns = 1
     )
 
     $paragraphs = New-Object System.Collections.Generic.List[object]
@@ -392,11 +397,15 @@ function Get-PublisherParagraphs
                     $line = $para.Lines($k, 1)
 
                     $lineTop = [double]$line.BoundTop
+                    # (not a trailing space after the last line, on its row)
+                    $nextColumn = ($Columns -gt 1 -and $lineLefts.Count -gt 0 -and
+                                   [double]$line.BoundLeft -gt $lineLefts[$lineLefts.Count - 1] + 18 -and
+                                   $lineTop -lt $lineTops[$lineTops.Count - 1] - 1)
 
                     if ($line.Length -eq 0 -or
                         $line.Start -ge $paraEnd -or
                         $line.Start -le $prevStart -or
-                        (-not $NoLineTops -and $lineTops.Count -gt 0 -and
+                        (-not $NoLineTops -and $lineTops.Count -gt 0 -and -not $nextColumn -and
                          $lineTop -le $lineTops[$lineTops.Count - 1])) {
                         break
                     }
@@ -675,8 +684,13 @@ function Add-PublisherTextFrameFields
     $Record.valign = [int]$frame.VerticalTextAlignment
     $Record.margins = @([double]$frame.MarginLeft, [double]$frame.MarginTop,
                         [double]$frame.MarginRight, [double]$frame.MarginBottom)
+    $columns = 1
+    try { $columns = [Math]::Max([int]$frame.Columns, 1) } catch { }
+    if ($columns -gt 1) {
+        $Record.columns = $columns
+    }
     $Record.paragraphs = (Get-PublisherParagraphs -TextRange $TextRange -NoLineTops:$NoLineTops `
-                              -Obstacles $Obstacles)
+                              -Obstacles $Obstacles -Columns $columns)
 
     # Text that doesn't fit is hidden; the export still writes it.
     $overflowing = $false
