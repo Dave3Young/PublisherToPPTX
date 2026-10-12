@@ -1330,9 +1330,11 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
     """How far to raise a box above Publisher's first line top so that its
     first line, at PowerPoint's percentage spacing line / (1.2 size) (or pct),
     sits where Publisher's does at this multiple. Measured from single
-    spacing, where the two agree: line / multiple, unless that is far from
-    the font's single spacing and line isn't a measured pitch of text of one
-    size; then the font's, any further height being below the text."""
+    spacing: line / multiple, unless that is far from the font's single
+    spacing and line isn't a measured pitch of text of one size; then the
+    font's, any further height being below the text. For a larger multiple
+    of the font's own single spacing, from where Publisher puts the first
+    baseline at single spacing, which it keeps."""
     if size <= 0:
         return None
     pct = pct or line / (1.2 * size)
@@ -1345,11 +1347,25 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
         ratio = seen
     if not ratio:
         return None
-    lift = (ppt_first_baseline(pct) - ppt_first_baseline(ratio / 1.2)) * size
-    if multiple < 1.0:
-        lift += PUB_CUT_ABOVE * (1.0 - multiple) * ratio * size
-    elif ((multiple > 1.0 and (font_name(font) or "").lower().startswith("gill sans")) or
-          (multiple == 1.0 and after > 0 and (font_name(font) or "").lower() == "gill sans mt")):
+    single = pub_single_spacing(font, bold, italic)
+    first = pub_first_baseline(font, bold, italic)
+    m = _font_metrics(font, bold, italic)
+    if multiple > 1.0 and single and first is not None and abs(ratio / single - 1.0) <= 0.03:
+        lift = (ppt_first_baseline(pct) - first) * size
+    else:
+        lift = (ppt_first_baseline(pct) - ppt_first_baseline(ratio / 1.2)) * size
+        if multiple < 1.0:
+            lift += PUB_CUT_ABOVE * (1.0 - multiple) * ratio * size
+        # where the two put it at single spacing, where that isn't the same
+        # place: a font with a line gap
+        gap = (m["typo"] if m["version"] >= 2 else m["hhea"])[2] if m else 0.0
+        if single and first is not None and gap > 0:
+            ppt = ppt_first_baseline(single / 1.2)
+            if single < 1.2:
+                ppt = min(ppt, m["win"][0])
+            lift -= (first - ppt) * size
+    if ((multiple > 1.0 and (font_name(font) or "").lower().startswith("gill sans")) or
+            (multiple == 1.0 and after > 0 and (font_name(font) or "").lower() == "gill sans mt")):
         lift -= PUB_GILL_SANS_DROP * size
     return lift
 
@@ -1456,6 +1472,22 @@ def pub_single_spacing(family: Optional[str], bold: bool = False,
     if ratio and m["pages"] & (0b11111 << 17):
         ratio *= CJK_LINE_SCALE
     return ratio
+
+
+def pub_first_baseline(family: Optional[str], bold: bool = False,
+                       italic: bool = False) -> Optional[float]:
+    """Where Publisher puts the first baseline at single spacing, below the
+    top of the line, per point of size: the ascender and the whole line gap,
+    from the table its single spacing comes from (measured). PowerPoint puts
+    it where it puts any font's at that percentage, but below 100% no lower
+    than the font's Windows ascent: about the same place for a font with no
+    line gap, but higher for one with a large gap. None if the font file
+    can't be read, or for an East Asian font, not measured."""
+    m = _font_metrics(family, bold, italic)
+    if not m or m["pages"] & (0b11111 << 17):
+        return None
+    asc, _, gap = m["typo"] if m["version"] >= 2 else m["hhea"]
+    return asc + max(gap, 0.0)
 
 
 def exact_lift(line: float, size: float, font: Optional[str],
