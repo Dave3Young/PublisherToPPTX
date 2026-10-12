@@ -530,7 +530,8 @@ PPT_BASELINE_NEAR_SINGLE = [(0.8, 0.735), (0.825, 0.771), (0.85, 0.792), (0.875,
 # Publisher keeps the first baseline where single spacing puts it for a larger
 # multiple, but takes this share of a smaller one's cut from above it. Gill
 # Sans is the exception: any larger multiple drops it by about this much of
-# the font size.
+# the font size, and for Gill Sans MT so does space after a one-line
+# paragraph at single spacing.
 PUB_CUT_ABOVE = 0.75
 CJK_LINE_SCALE = 1.3
 PUB_GILL_SANS_DROP = 0.25
@@ -1325,7 +1326,7 @@ def ppt_first_baseline(pct: float) -> float:
 def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
              bold: bool = False, italic: bool = False,
              pct: Optional[float] = None, measured: bool = False,
-             mixed: bool = False) -> Optional[float]:
+             mixed: bool = False, after: float = 0.0) -> Optional[float]:
     """How far to raise a box above Publisher's first line top so that its
     first line, at PowerPoint's percentage spacing line / (1.2 size) (or pct),
     sits where Publisher's does at this multiple. Measured from single
@@ -1347,7 +1348,8 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
     lift = (ppt_first_baseline(pct) - ppt_first_baseline(ratio / 1.2)) * size
     if multiple < 1.0:
         lift += PUB_CUT_ABOVE * (1.0 - multiple) * ratio * size
-    elif multiple > 1.0 and (font_name(font) or "").lower().startswith("gill sans"):
+    elif ((multiple > 1.0 and (font_name(font) or "").lower().startswith("gill sans")) or
+          (multiple == 1.0 and after > 0 and (font_name(font) or "").lower() == "gill sans mt")):
         lift -= PUB_GILL_SANS_DROP * size
     return lift
 
@@ -1886,7 +1888,8 @@ class Converter:
                 big = max(sized, key=lambda r: r.size_pt)
                 better = pct_lift(line, first_sizes[0], multiple, big.font, big.bold, big.italic,
                                   pct=p.line_multiple, measured=len(tops) >= 2,
-                                  mixed=(rec.get("size") or 0) < 0)
+                                  mixed=(rec.get("size") or 0) < 0,
+                                  after=(rec.get("spaceAfter") or 0.0) if len(tops) < 2 else 0.0)
                 if better is not None:
                     lift = better
             if rec.get("lineRule") == 3 and sizes:
