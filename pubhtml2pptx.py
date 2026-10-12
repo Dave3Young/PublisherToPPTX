@@ -3697,12 +3697,15 @@ def _line_tightening(para, width_pt: float) -> dict:
         # to their stops; only the text after the last tab can be squeezed
         x = para.left_indent_pt + (para.indent_pt if i == 0 else 0.0)
         chars = 0
+        # a hanging first line's tab stops at the indent, before the defaults
+        line_stops = (sorted(stops + [para.left_indent_pt])
+                      if i == 0 and para.indent_pt < 0 else stops)
         for k, (run, piece) in enumerate(pieces):
             if k == len(pieces) - 1:
                 piece = piece.rstrip()
             for j, seg in enumerate(piece.split("\t")):
                 if j:
-                    x = next_tab_px(x, stops, TAB_STOP_PT)
+                    x = next_tab_px(x, line_stops, TAB_STOP_PT)
                     chars = 0
                 x += (text_width_px(seg, run.font, run.size_pt or 12.0, bool(run.bold),
                                     bool(run.italic))
