@@ -3171,6 +3171,41 @@ def read_page_size(export_dir: str, base: str) -> Optional[tuple]:
     return (w, h) if w > 0 and h > 0 else None
 
 
+def read_page_spreads(export_dir: str, base: str) -> Optional[list]:
+    """Each page's (spread, x offset, y offset in pt) within its two-page
+    spread, recorded by stage 1 as <base>_spreads.txt."""
+    path = os.path.join(export_dir, base + "_spreads.txt")
+    try:
+        with open(path, encoding="ascii") as fh:
+            rows = [line.split() for line in fh if line.strip()]
+        return [(int(r[0]), float(r[1]), float(r[2])) for r in rows]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def share_spread_shapes(slide_pages: list, spreads: list, dpi: float) -> int:
+    """Publisher keeps a shape that crosses the fold of a two-page spread on
+    one page, and exports it only there. Put a copy, moved by the pages'
+    offsets in the spread, on each other page of the spread it reaches, so
+    that page shows its part. Returns the number of copies."""
+    k = dpi / 72.0
+    added = []
+    for p, (spread, px, py) in enumerate(spreads):
+        for q, (other, qx, qy) in enumerate(spreads):
+            if q == p or other != spread:
+                continue
+            dx, dy = (px - qx) * k, (py - qy) * k
+            qw, qh = slide_pages[q][0], slide_pages[q][1]
+            for b in slide_pages[p][2]:
+                x, y = b.x + dx, b.y + dy
+                # ignore a hairline overlap: shapes drawn to the fold
+                if x + (b.w or 0) > 1 and x < qw - 1 and y + (b.h or 0) > 1 and y < qh - 1:
+                    added.append((q, dataclasses.replace(b, x=x, y=y)))
+    for q, b in added:
+        slide_pages[q][2].append(b)
+    return len(added)
+
+
 def bounding_page(boxes: list, dpi: float, fallback_in):
     if not boxes:
         return fallback_in[0] * dpi, fallback_in[1] * dpi
@@ -3715,9 +3750,20 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         warn(f"pages have {len(sizes)} different sizes; the deck uses the largest "
              f"({w_in:.2f} x {h_in:.2f} in) and smaller pages sit top-left")
 
-    for idx, (pw, ph, boxes) in enumerate(slide_pages, start=1):
-        if args.hires:
+    if args.hires:
+        for idx, (pw, ph, boxes) in enumerate(slide_pages, start=1):
             apply_hires(boxes, export_dir, base, idx, resolver, warn, dpi)
+    # after apply_hires, which matches pictures to the page they belong to
+    spreads = read_page_spreads(export_dir, base)
+    if spreads and len(spreads) != len(slide_pages):
+        warn(f"Publisher has {len(spreads)} pages but the HTML has {len(slide_pages)}; "
+             f"shapes crossing a spread's fold are left on their own page")
+    elif spreads:
+        shared = share_spread_shapes(slide_pages, spreads, dpi)
+        if shared and args.verbose:
+            print(f"  {shared} shape(s) crossing a fold copied to the facing page")
+
+    for idx, (pw, ph, boxes) in enumerate(slide_pages, start=1):
         if args.verbose:
             print(f"  page {idx}: {len(boxes)} shapes  ({pw/dpi:.2f} x {ph/dpi:.2f} in)")
         build_slide(prs, boxes, resolver, dpi, warn, args.verbose, scale)

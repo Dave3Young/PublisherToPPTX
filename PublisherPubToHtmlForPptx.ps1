@@ -1710,6 +1710,62 @@ try {
 
 
             # ====================================================
+            # PAGE SPREADS
+            # ====================================================
+            # A shape that crosses the fold of a two-page spread belongs to
+            # one page only, and the HTML exports it with that page. Record
+            # each page's spread and its offset within it, in points, so
+            # stage 2 can put the part across the fold on the other page:
+            # one line per page, "<spread> <x offset> <y offset>".
+
+            $spreadsPath = Join-Path `
+                $outputFolder `
+                ($baseName + "_spreads.txt")
+
+            if (Test-Path $spreadsPath) {
+
+                Write-Output "Spreads file already exists; not rewriting: $spreadsPath"
+            }
+            else {
+
+                try {
+
+                    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+                    $spreadLines = @()
+                    $spreadNo = 0
+                    $spreadLeft = 0
+
+                    foreach ($page in $doc.Pages) {
+
+                        if ($spreadLeft -le 0) {
+
+                            $spreadNo++
+                            $spreadLeft = [int]$page.ReaderSpread.PageCount
+                        }
+                        $spreadLeft--
+
+                        $spreadLines += "{0} {1} {2}" -f $spreadNo,
+                            ([double]$page.XOffsetWithinReaderSpread).ToString("0.####", $inv),
+                            ([double]$page.YOffsetWithinReaderSpread).ToString("0.####", $inv)
+                    }
+
+                    Set-Content `
+                        -Path $spreadsPath `
+                        -Value $spreadLines `
+                        -Encoding ASCII `
+                        -ErrorAction Stop
+
+                    Write-Output "Spreads: $($doc.Pages.Count) page(s) on $spreadNo spread(s)"
+                }
+                catch {
+
+                    Write-Warning "Unable to record the page spreads."
+                    Write-Warning $_
+                }
+            }
+
+
+            # ====================================================
             # HTML EXPORT
             # ====================================================
 
