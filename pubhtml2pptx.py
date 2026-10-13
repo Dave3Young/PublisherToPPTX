@@ -2836,8 +2836,10 @@ class Converter:
 
     def _shapes_before_picture(self, el: Tag, shape_children: list) -> set:
         """ids of the shape children that are group members stacked beneath
-        every shape in el's own in-flow picture of the group, going by the
-        order of the group's children in the VML."""
+        most of the shapes in el's own in-flow picture of the group, going
+        by the order of the group's children in the VML. (The picture is one
+        layer, so a member between its shapes goes where fewer are wrong: a
+        white shape that hides part of one is usually above it.)"""
         kids = {id(c) for c in shape_children}
         order = getattr(self, "vml_order", None) or {}
 
@@ -2855,7 +2857,7 @@ class Converter:
         under = set()
         for child in shape_children:
             mine = places(child)
-            if mine and max(mine) < min(drawn):
+            if mine and 2 * sum(1 for d in drawn if d > max(mine)) > len(drawn):
                 under.add(id(child))
         return under
 
