@@ -1421,6 +1421,9 @@ KEEP_LINES_SLACK = 0.025
 KEEP_LINES_SLACK_LARGE = 0.01
 KEEP_LINES_LARGE_PT = 20.0
 KEEP_LINES_MAX_SPC = 0.05
+# hinting rounds each letter by a fraction of a pixel, whatever its size: a
+# huge heading's share of the width would squeeze it far past what that takes
+KEEP_LINES_SLACK_CHAR_PT = 0.3
 
 
 def _keep_lines_slack(size_pt: float, font: Optional[str] = None) -> float:
@@ -1429,6 +1432,11 @@ def _keep_lines_slack(size_pt: float, font: Optional[str] = None) -> float:
     if m and m.get("fixed"):
         return 0.0
     return KEEP_LINES_SLACK if size_pt < KEEP_LINES_LARGE_PT else KEEP_LINES_SLACK_LARGE
+
+
+def _keep_lines_extra(width_pt: float, chars: int, size_pt: float, font: Optional[str] = None) -> float:
+    """The width (pt) PowerPoint may set a line of text wider than measured."""
+    return min(width_pt * _keep_lines_slack(size_pt, font), KEEP_LINES_SLACK_CHAR_PT * chars)
 
 _SPACE_RUN_RE = re.compile(" {8,}")
 
@@ -3916,7 +3924,8 @@ def _line_tightening(para, width_pt: float) -> dict:
                 if j:
                     x = next_tab_px(x, line_stops, TAB_STOP_PT)
                     chars = 0
-                x += (_run_text_width(run, seg) * (1.0 + _keep_lines_slack(run.size_pt or 12.0, run.font))
+                seg_w = _run_text_width(run, seg)
+                x += (seg_w + _keep_lines_extra(seg_w, len(seg), run.size_pt or 12.0, run.font)
                       + (run.spacing_pt or 0.0) * len(seg))
                 chars += len(seg)
         pub_line = pub_text[cuts[i]:cuts[i + 1]].rstrip("\r\v\n") if pub_widths else ""
@@ -3929,7 +3938,7 @@ def _line_tightening(para, width_pt: float) -> dict:
                                                          bool(run.bold), bool(run.italic))
             lead = para.left_indent_pt + (para.indent_pt if i == 0 else 0.0)
             size = max((run.size_pt or 12.0) for run, _ in pieces)
-            x = max(x, lead + pub_w * (1.0 + _keep_lines_slack(size, run.font)))
+            x = max(x, lead + pub_w + _keep_lines_extra(pub_w, len(pub_line.strip()), size, run.font))
         need = x - width_pt
         if need > 0 and chars:
             size = max((run.size_pt or 12.0) for run, _ in pieces)
