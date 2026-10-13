@@ -1871,7 +1871,11 @@ class Converter:
             if bullet_runs:
                 if p.indent_pt < 0:
                     # a hanging bullet: a tab takes the text to the indent
-                    bullet_runs[-1].text = bullet_runs[-1].text.rstrip(" \xa0\t") + "\t"
+                    tab = bullet_runs[-1]
+                    if not tab.text.strip(" \xa0\t") and p.runs:
+                        # in the text's font: the export leaves the gap unsized
+                        tab.font, tab.size_pt = p.runs[0].font, p.runs[0].size_pt
+                    tab.text = tab.text.rstrip(" \xa0\t") + "\t"
                     bullet_runs = [r for r in bullet_runs if r.text]
                 p.runs[:0] = bullet_runs
         text_paras = [p for p in paras if p.text().strip()]
