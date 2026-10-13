@@ -3355,12 +3355,33 @@ def _vml_box_styles(shape: Tag, decl: dict, box: Tag, outline: tuple,
     return styles
 
 
+def _vml_flat_box(shape: Tag) -> bool:
+    """True if a shape draws only a flat fill and plain outline: no picture,
+    gradient, pattern or texture fill, no shadow, no second stroke colour or
+    line style (BorderArt is exported as a white stroke with one), and any
+    border set side by side alike on all four sides."""
+    fill = shape.find("v:fill", recursive=False)
+    stroke = shape.find("v:stroke", recursive=False)
+    shadow = shape.find("v:shadow", recursive=False)
+    sides = {(str(sd.get("on", "")).lower(), sd.get("weight"), sd.get("color"))
+             for sd in (stroke.find(f"o:{side}", recursive=False) if stroke is not None else None
+                        for side in ("left", "top", "right", "bottom"))
+             if sd is not None}
+    return (shape.find("v:imagedata") is None
+            and (stroke is None or set(stroke.attrs) <= {"dashstyle", "joinstyle", "endcap"})
+            and len(sides) <= 1
+            and (fill is None or (not fill.get("src")
+                                  and str(fill.get("type") or "solid").lower() == "solid"))
+            and (shadow is None or str(shadow.get("on", "f")).lower() not in ("t", "true")))
+
+
 def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
     """Publisher exports some text boxes (filled ones, for instance) as a
     picture of the text, keeping the real text only in the VML inside an
     <!--[if gte vml 1]> comment. Swaps each such picture for a positioned div
     holding that text, so it stays editable, with the shape's outline behind
-    it. Shapes inside a VML group, rotated or WordArt shapes and outlines
+    it; an empty one too, if its picture shows only a flat fill and outline.
+    Shapes inside a VML group, rotated or WordArt shapes and outlines
     PowerPoint has no preset for keep their picture; inline ones are left to
     restore_vml_inline_text_boxes. Returns how many were swapped."""
     found, text_rects = {}, {}
@@ -3368,8 +3389,8 @@ def restore_vml_text_boxes(soup: BeautifulSoup) -> int:
         vml = BeautifulSoup(str(c), "html.parser")
         for shape in vml.find_all(["v:shape", "v:rect", "v:roundrect", "v:oval"]):
             box = shape.find("v:textbox", recursive=False)
-            if (box is None or not box.get_text(strip=True) or shape.find_parent("v:group")
-                    or shape.find("v:textpath")):
+            if (box is None or shape.find_parent("v:group") or shape.find("v:textpath")
+                    or not (box.get_text(strip=True) or _vml_flat_box(shape))):
                 continue
             decl = parse_decls(shape.get("style", ""))
             if (decl.get("rotation") or "layout-flow" in str(box.get("style", ""))
