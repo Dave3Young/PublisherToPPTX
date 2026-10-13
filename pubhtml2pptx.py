@@ -705,6 +705,11 @@ def load_pub_text(export_dir: str, base: str) -> dict:
     return index
 
 
+def _pub_set_alike(a: dict, b: dict) -> bool:
+    """True if two paragraph records are set in one size and line spacing."""
+    return all(a.get(name) == b.get(name) for name in ("size", "lineSpacing", "lineRule"))
+
+
 def _pub_fill_bounds(shape: dict, pars: list) -> list:
     """Publisher gives a paragraph that runs on past its frame, into a linked
     one for instance, no bounds (top, left and height all 0), though it
@@ -712,7 +717,8 @@ def _pub_fill_bounds(shape: dict, pars: list) -> list:
     instead: the top is the first line's, the left the leftmost line's, and
     the bottom the next paragraph's top or, for the last, a line below its
     last line plus its space after. One with a single line and nothing below
-    stays unplaced, and so do lines outside the frame. A linked frame reports
+    takes the line pitch of the frame's paragraphs set alike, or else stays
+    unplaced, and so do lines outside the frame. A linked frame reports
     its first paragraph whole, with the lines it has in the frame before and
     then, from stage 1's version 2, its own: it keeps only those, and the
     text from the first of them, which is what the export gives the frame."""
@@ -768,7 +774,11 @@ def _pub_fill_bounds(shape: dict, pars: list) -> list:
             gaps = sorted(b - a for a, b in zip(tops, tops[1:]))
             bottom = tops[-1] + gaps[len(gaps) // 2] + float(par.get("spaceAfter") or 0.0)
         else:
-            continue
+            gaps = sorted(b - a for q in pars if _pub_set_alike(q, par)
+                          for a, b in zip(q.get("lineTops") or [], (q.get("lineTops") or [])[1:]) if b > a)
+            if not gaps:
+                continue
+            bottom = tops[-1] + gaps[len(gaps) // 2] + float(par.get("spaceAfter") or 0.0)
         out[n] = dict(par, top=float(tops[0]), height=bottom - float(tops[0]),
                       left=float(min(lefts)) if lefts else None)
     return out
@@ -1994,9 +2004,16 @@ class Converter:
         With text_area (the box's first paragraph), one whose lines stage 1
         measured only before key's text, in another box, starts at the top
         of this one's text, as far below its top as text_area is in from
-        its left."""
+        its left. A short key only there, and only if one paragraph on the
+        page ends with it."""
         if len(key) < 20:
-            return None, False
+            if not text_area or len(key) < 8:
+                return None, False
+            ends = {k for k, recs in self.pub_text.items()
+                    if len(k) > len(key) and k.endswith(key)
+                    and any(r.get("page", 0) in (0, self.page) for r in recs)}
+            if len(ends) != 1:
+                return None, False
         x0, y0, x1, y1 = region
         tol = 3.0
         k72 = 72.0 / self.dpi
