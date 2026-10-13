@@ -3472,16 +3472,28 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
             parts = _vml_group_parts(group, pics)
             if (parts and any(p[0] == "img" for p in parts)
                     and any(p[0] == "text" for p in parts)):
-                found[group.get("id")] = (parts, parse_decls(group.get("style", "")).get("z-index"))
+                found[group.get("id")] = (parts, parse_decls(group.get("style", "")).get("z-index"),
+                                          group)
     count = 0
     for img in soup.find_all("img"):
         ids = str(img.get("v:shapes") or "").split()
         hit = found.get(ids[0]) if ids else None
         if not hit:
             continue
-        parts, z = hit
+        parts, z, group = hit
         target = img.parent if (img.parent and img.parent.name == "span"
                                 and len(img.parent.find_all(True)) == 1) else img
+        # the group's place is measured outside any span positioning its picture
+        anchor = target
+        while (anchor.parent is not None and anchor.parent.name == "span" and "absolute"
+               in str(parse_decls(anchor.parent.get("style", "")).get("position", ""))):
+            anchor = anchor.parent
+        # members stacked above a picture the span keeps for another member go after it
+        order = [c.get("id") for c in group.find_all(True, recursive=False)]
+        kept = [order.index(i) for other in anchor.find_all("img") if other is not img
+                for i in str(other.get("v:shapes") or "").split() if i in order]
+        above_from = min(kept) if anchor is not target and kept else len(order)
+        after = anchor
         for part in parts:
             left, top, width, height = part[2]
             styles = ["position:absolute", f"left:{left:.2f}pt", f"top:{top:.2f}pt"]
@@ -3502,7 +3514,11 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
                 inner = box.find("div")
                 for child in list((inner or box).children):
                     el.append(child.extract())
-            target.insert_before(el)
+            if part[1].get("id") in order and order.index(part[1].get("id")) > above_from:
+                after.insert_after(el)
+                after = el
+            else:
+                anchor.insert_before(el)
         target.extract()
         count += 1
     return count
