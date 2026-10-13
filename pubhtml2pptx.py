@@ -3436,7 +3436,7 @@ def _vml_group_parts(group: Tag, pics: list) -> Optional[list]:
     parts = []
     for child in group.find_all(True, recursive=False):
         if child.name not in VML_SHAPES:
-            if child.name in ("o:lock", "v:fill", "v:stroke", "v:shadow"):
+            if child.name in ("o:lock", "v:fill", "v:stroke", "v:shadow", "v:shapetype"):
                 continue
             return None
         cd = parse_decls(child.get("style", ""))
@@ -3461,8 +3461,23 @@ def _vml_group_parts(group: Tag, pics: list) -> Optional[list]:
             if not fits:
                 return None
             parts.append(("img", child, rect, min(fits, key=lambda f: f[0])[1]))
+        elif _vml_draws(child):
+            # a shape with nothing in it, drawn as its outline and fill
+            outline = _vml_outline(child)
+            if outline is None:
+                return None
+            parts.append(("text", child, rect, box, outline))
         # an empty frame draws nothing in the group's picture either
     return parts
+
+
+def _vml_draws(shape: Tag) -> bool:
+    """Whether a VML shape is filled or outlined (VML's default is both)."""
+    def on(attr, el):
+        return (str(shape.get(attr, "t")).lower() not in ("f", "false")
+                and str((el or {}).get("on", "t")).lower() not in ("f", "false"))
+    return (on("filled", shape.find("v:fill", recursive=False))
+            or on("stroked", shape.find("v:stroke", recursive=False)))
 
 
 def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> int:
@@ -3484,7 +3499,8 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
                 continue
             parts = _vml_group_parts(group, pics)
             if (parts and any(p[0] == "img" for p in parts)
-                    and any(p[0] == "text" for p in parts)):
+                    and any(p[0] == "text" and p[3] is not None and p[3].get_text(strip=True)
+                            for p in parts)):
                 found[group.get("id")] = (parts, parse_decls(group.get("style", "")).get("z-index"),
                                           group)
     count = 0
@@ -3508,6 +3524,9 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
         above_from = min(kept) if anchor is not target and kept else len(order)
         after = anchor
         for part in parts:
+            if anchor is not target and part[1].get("id") in order \
+                    and order.index(part[1].get("id")) in kept:
+                continue
             left, top, width, height = part[2]
             styles = ["position:absolute", f"left:{left:.2f}pt", f"top:{top:.2f}pt"]
             if part[0] == "img":
@@ -3518,6 +3537,8 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
                                   style=";".join(styles))
             else:
                 _, shape, _, box, outline = part
+                if box is None:
+                    box = soup.new_tag("v:textbox")
                 styles += _vml_box_styles(
                     shape, {"width": f"{width:.2f}pt", "height": f"{height:.2f}pt"}, box,
                     outline, text_rects.get(str(shape.get("type") or "").lstrip("#")))
