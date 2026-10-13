@@ -844,6 +844,42 @@ def _pub_cut(rec: dict, n: int) -> dict:
     return out
 
 
+def _pub_unseen_tail(rec: dict, n: int, top: float, left: float) -> Optional[dict]:
+    """A copy of a paragraph's record from its last n non-whitespace
+    characters on, for the part of a paragraph that runs on into a linked
+    text box where stage 1 measured none of its lines: they're only those
+    in the box it starts in. Its first line is at top, left (pt), the rest a
+    line apart (lineUnseen); how many there are is the next paragraph's
+    to say. None unless every line stage 1 has starts before the cut."""
+    text = str(rec.get("text", ""))
+    seen, cut = 0, None
+    for i in range(len(text) - 1, -1, -1):
+        if not text[i].isspace():
+            seen += 1
+            if seen == n:
+                cut = i
+                break
+    starts = rec.get("lineStarts") or []
+    tops = rec.get("lineTops") or []
+    if cut is None or not starts or len(tops) != len(starts):
+        return None
+    if len(text[:cut].encode("utf-16-le")) // 2 <= max(starts):
+        return None
+    gaps = sorted(b - a for a, b in zip(tops, tops[1:]) if b > a)
+    pitch = gaps[len(gaps) // 2] if gaps else None
+    size = float(rec.get("size") or 0.0)
+    multiple = pub_line_multiple(rec)
+    if pitch is None and size > 0 and multiple:
+        ratio = pub_single_spacing(rec.get("font"))
+        pitch = ratio * size * multiple if ratio else None
+    if not pitch:
+        return None
+    return dict(rec, text=text[cut:], spaceBefore=0.0, firstIndent=0.0,
+                lineStarts=[0], lineJumps=[], lineTops=[top], lineLefts=[left],
+                lineWidths=[], top=top, left=left, at=None,
+                height=pitch + float(rec.get("spaceAfter") or 0.0), lineUnseen=pitch)
+
+
 def _pub_tail(rec: dict, n: int) -> Optional[dict]:
     """A copy of a paragraph's record from its last n non-whitespace
     characters on, with the lines from there, for the part of a paragraph
@@ -1782,7 +1818,9 @@ class Converter:
                     head, at = self.pub_find_continued(pub_key(p.text()), region)
                     if not head:
                         # or the rest of one that started in another
-                        head, at = self.pub_find_tail(pub_key(p.text()), region)
+                        first = next((q for q in paras if q.text().strip()), None) is p
+                        head, at = self.pub_find_tail(pub_key(p.text()), region,
+                                                      text_area if first else None)
                     if head:
                         rec, placed = head, at
             if rec and rec.get("frame") and text_area:
@@ -1794,7 +1832,9 @@ class Converter:
                 p.pub, p.pub_placed = rec, placed
                 _pub_best_fit(p, rec)
                 p.bullet = bool(bullet_runs)
-                p.keep_lines = self.keep_lines and _pub_line_breaks(p, rec)
+                # (an unseen tail's line breaks aren't known)
+                p.keep_lines = (self.keep_lines and not rec.get("lineUnseen")
+                                and _pub_line_breaks(p, rec))
                 if not p.keep_lines:
                     _space_breaks(p, rec)
                 # Publisher's indents: the HTML leaves out hanging ones
@@ -1909,15 +1949,21 @@ class Converter:
                     return _pub_cut(rec, len(key)), True
         return None, False
 
-    def pub_find_tail(self, key: str, region):
+    def pub_find_tail(self, key: str, region, text_area=None):
         """A record whose text ends with key, its lines from there inside
         region, for the part of a paragraph that runs on into a linked text
         box, where the export starts a paragraph of its own. Returns a copy cut
-        to key's text; the record isn't claimed (its start is another box's)."""
+        to key's text; the record isn't claimed (its start is another box's).
+        With text_area (the box's first paragraph), one whose lines stage 1
+        measured only before key's text, in another box, starts at the top
+        of this one's text, as far below its top as text_area is in from
+        its left."""
         if len(key) < 20:
             return None, False
         x0, y0, x1, y1 = region
         tol = 3.0
+        k72 = 72.0 / self.dpi
+        unseen = None
         for k, recs in self.pub_text.items():
             if len(k) <= len(key) or not k.endswith(key):
                 continue
@@ -1926,11 +1972,19 @@ class Converter:
                     continue
                 tail = _pub_tail(rec, len(key))
                 if tail is None:
+                    if text_area and unseen is None:
+                        inset = max(text_area[0] - x0, 0.0)
+                        unseen = _pub_unseen_tail(rec, len(key), (y0 + inset) * k72,
+                                                  text_area[0] * k72)
+                        lines = zip(rec.get("lineLefts") or [], rec.get("lineTops") or [])
+                        if unseen and any(x0 - tol <= lx / k72 <= x1 + tol and
+                                          y0 - tol <= ly / k72 <= y1 + tol for lx, ly in lines):
+                            unseen = None   # its lines are in this box after all
                     continue
                 rx, ry = tail["left"] * self.dpi / 72.0, tail["top"] * self.dpi / 72.0
                 if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
                     return tail, True
-        return None, False
+        return (unseen, True) if unseen else (None, False)
 
     def _pub_place(self, paras: list, bottom: Optional[float] = None):
         """Puts paragraphs where Publisher puts them: sets each one's exact line
@@ -1979,6 +2033,16 @@ class Converter:
         # in its overflow too
         self.pub_overflowed = bool(text[-1].pub.get("overflowAfter"))
         paras[:] = text
+        for i, p in enumerate(paras):
+            pitch = p.pub.get("lineUnseen")
+            if not pitch or i + 1 >= len(paras):
+                continue
+            rec, nxt = p.pub, paras[i + 1].pub
+            after = float(rec.get("spaceAfter") or 0.0)
+            n = max(int(round((nxt["top"] - (nxt.get("spaceBefore") or 0.0) - after
+                               - rec["top"]) / pitch)), 1)
+            p.pub = dict(rec, lineTops=[rec["top"] + k * pitch for k in range(n)],
+                         height=n * pitch + after)
 
         def text_tops(p):
             """The paragraph's line tops, and how far its text's top is below
