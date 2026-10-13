@@ -1423,7 +1423,11 @@ KEEP_LINES_LARGE_PT = 20.0
 KEEP_LINES_MAX_SPC = 0.05
 
 
-def _keep_lines_slack(size_pt: float) -> float:
+def _keep_lines_slack(size_pt: float, font: Optional[str] = None) -> float:
+    # a fixed-pitch font's letters keep its one width, as Publisher sets them
+    m = _font_metrics(font) if font else None
+    if m and m.get("fixed"):
+        return 0.0
     return KEEP_LINES_SLACK if size_pt < KEEP_LINES_LARGE_PT else KEEP_LINES_SLACK_LARGE
 
 _SPACE_RUN_RE = re.compile(" {8,}")
@@ -1576,7 +1580,8 @@ def _font_metrics(family: Optional[str], bold: bool = False,
     """A font's metrics, per point of size: its average character width
     (avg_width), OS/2 typo ascender,
     descender and line gap (typo), the same from hhea (hhea), Windows ascent
-    and descent (win), the OS/2 table's version, and its code page bits.
+    and descent (win), the OS/2 table's version, its code page bits, and
+    whether it is fixed-pitch (fixed).
     None if the font file can't be read."""
     name = (font_name(family) or "").lower()
     style = " ".join(s for s, on in (("bold", bold), ("italic", italic)) if on)
@@ -1605,7 +1610,11 @@ def _font_metrics(family: Optional[str], bold: bool = False,
                 typo=tuple(v / upm for v in struct.unpack(">hhh", data[os2 + 68:os2 + 74])),
                 win=tuple(v / upm for v in struct.unpack(">HH", data[os2 + 74:os2 + 78])),
                 hhea=tuple(v / upm for v in struct.unpack(">hhh", data[hhea + 4:hhea + 10])),
-                pages=struct.unpack(">I", data[os2 + 78:os2 + 82])[0])
+                pages=struct.unpack(">I", data[os2 + 78:os2 + 82])[0],
+                # post's isFixedPitch, or a Latin text face's PANOSE proportion
+                fixed=(b"post" in tables and struct.unpack(
+                    ">I", data[tables[b"post"] + 12:tables[b"post"] + 16])[0] != 0)
+                or data[os2 + 32] == 2 and data[os2 + 35] == 9)
         except (OSError, KeyError, struct.error, ZeroDivisionError):
             found = None
     _metrics_cache[key] = found
@@ -3882,7 +3891,7 @@ def _line_tightening(para, width_pt: float) -> dict:
                 if j:
                     x = next_tab_px(x, line_stops, TAB_STOP_PT)
                     chars = 0
-                x += (_run_text_width(run, seg) * (1.0 + _keep_lines_slack(run.size_pt or 12.0))
+                x += (_run_text_width(run, seg) * (1.0 + _keep_lines_slack(run.size_pt or 12.0, run.font))
                       + (run.spacing_pt or 0.0) * len(seg))
                 chars += len(seg)
         pub_line = pub_text[cuts[i]:cuts[i + 1]].rstrip("\r\v\n") if pub_widths else ""
@@ -3895,7 +3904,7 @@ def _line_tightening(para, width_pt: float) -> dict:
                                                          bool(run.bold), bool(run.italic))
             lead = para.left_indent_pt + (para.indent_pt if i == 0 else 0.0)
             size = max((run.size_pt or 12.0) for run, _ in pieces)
-            x = max(x, lead + pub_w * (1.0 + _keep_lines_slack(size)))
+            x = max(x, lead + pub_w * (1.0 + _keep_lines_slack(size, run.font)))
         need = x - width_pt
         if need > 0 and chars:
             size = max((run.size_pt or 12.0) for run, _ in pieces)
