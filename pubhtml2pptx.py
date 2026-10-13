@@ -876,7 +876,8 @@ def _pub_unseen_tail(rec: dict, n: int, top: float, left: float) -> Optional[dic
     text box where stage 1 measured none of its lines: they're only those
     in the box it starts in. Its first line is at top, left (pt), the rest a
     line apart (lineUnseen); how many there are is the next paragraph's
-    to say. None unless every line stage 1 has starts before the cut."""
+    to say. The first line's gap holds the space before as well. None
+    unless every line stage 1 has starts before the cut."""
     text = str(rec.get("text", ""))
     seen, cut = 0, None
     for i in range(len(text) - 1, -1, -1):
@@ -891,7 +892,10 @@ def _pub_unseen_tail(rec: dict, n: int, top: float, left: float) -> Optional[dic
         return None
     if len(text[:cut].encode("utf-16-le")) // 2 <= max(starts):
         return None
-    gaps = sorted(b - a for a, b in zip(tops, tops[1:]) if b > a)
+    before = float(rec.get("spaceBefore") or 0.0)
+    gaps = sorted(b - a - (before if i == 0 else 0.0)
+                  for i, (a, b) in enumerate(zip(tops, tops[1:]))
+                  if b - a - (before if i == 0 else 0.0) > 0)
     pitch = gaps[len(gaps) // 2] if gaps else None
     size = float(rec.get("size") or 0.0)
     multiple = pub_line_multiple(rec)
