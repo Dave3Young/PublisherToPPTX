@@ -545,11 +545,12 @@ PPT_BASELINE_NEAR_SINGLE = [(0.8, 0.735), (0.825, 0.771), (0.85, 0.792), (0.875,
                             (1.0, 0.967)]
 # Publisher keeps the first baseline where single spacing puts it for a larger
 # multiple, but takes this share of a smaller one's cut from above it. Gill
-# Sans is the exception: any larger multiple drops it by about this much of
-# the font size, and for Gill Sans MT so does space after a one-line
-# paragraph at single spacing.
+# Sans is the exception: any larger multiple drops it by about the first of
+# these shares of the font size (not the Ultra Bold), and for Gill Sans MT
+# space after a one-line paragraph at single spacing by the second.
 PUB_CUT_ABOVE = 0.75
 CJK_LINE_SCALE = 1.3
+PUB_GILL_SANS_DROP_MULTIPLE = 0.15
 PUB_GILL_SANS_DROP = 0.25
 # Gill Sans MT at exact spacing in Publisher: (descent, share of the line
 # above the baseline), measured; its font tables give neither
@@ -1547,8 +1548,10 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
             if single < 1.2:
                 ppt = min(ppt, m["win"][0])
             lift -= (first - ppt) * size
-    if ((multiple > 1.0 and (font_name(font) or "").lower().startswith("gill sans")) or
-            (multiple == 1.0 and after > 0 and (font_name(font) or "").lower() == "gill sans mt")):
+    name = (font_name(font) or "").lower()
+    if multiple > 1.0 and name.startswith("gill sans") and "ultra" not in name:
+        lift -= PUB_GILL_SANS_DROP_MULTIPLE * size
+    elif multiple == 1.0 and after > 0 and name == "gill sans mt":
         lift -= PUB_GILL_SANS_DROP * size
     return lift
 
