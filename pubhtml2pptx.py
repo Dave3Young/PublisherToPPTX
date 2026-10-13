@@ -538,7 +538,8 @@ SUB_BASELINE = "-25000"
 # Where PowerPoint puts the first baseline below the top of a box, per point of
 # font size, for a percentage line spacing (measured; the same for every
 # font). Away from single spacing it is linear, three quarters of the extra
-# going above the line; just below 100% the line keeps the font's own ascent.
+# going above the line; just below 100% the line keeps the font's own ascent,
+# and so it does until half a percent above.
 PPT_BASELINE_SLOPE, PPT_BASELINE_BASE = 0.9014, 0.0063
 PPT_BASELINE_NEAR_SINGLE = [(0.8, 0.735), (0.825, 0.771), (0.85, 0.792), (0.875, 0.828),
                             (0.9, 0.845), (0.925, 0.881), (0.95, 0.906), (0.975, 0.942),
@@ -1498,7 +1499,7 @@ def pub_line_multiple(rec: dict) -> Optional[float]:
 def ppt_first_baseline(pct: float) -> float:
     """PowerPoint's first baseline below the box top, per point of size."""
     table = PPT_BASELINE_NEAR_SINGLE
-    if pct <= table[0][0] or pct > table[-1][0] + 0.0005:
+    if pct <= table[0][0] or pct > table[-1][0] + 0.005:
         return PPT_BASELINE_BASE + PPT_BASELINE_SLOPE * pct
     for (x0, y0), (x1, y1) in zip(table, table[1:]):
         if pct <= x1:
@@ -1541,10 +1542,12 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
         if multiple < 1.0:
             lift += PUB_CUT_ABOVE * (1.0 - multiple) * ratio * size
         # where the two put it at single spacing, where that isn't the same
-        # place: a font with a line gap
+        # place: a font with a line gap. Publisher's line a little off the
+        # font's single spacing keeps its baseline, but PowerPoint's moves,
+        # and jumps up just past 100%
         gap = (m["typo"] if m["version"] >= 2 else m["hhea"])[2] if m else 0.0
         if single and first is not None and gap > 0:
-            ppt = ppt_first_baseline(single / 1.2)
+            ppt = ppt_first_baseline((ratio if abs(ratio / single - 1.0) <= 0.03 else single) / 1.2)
             if single < 1.2:
                 ppt = min(ppt, m["win"][0])
             lift -= (first - ppt) * size
