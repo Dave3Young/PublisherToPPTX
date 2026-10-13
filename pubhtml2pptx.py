@@ -575,12 +575,12 @@ def pub_key(text: str) -> str:
 
 # A bullet or list number the export wrote as text (Symbol, Wingdings or
 # Unicode glyphs, "1." or "a)"); Publisher's own text leaves them out
-_BULLET_RE = re.compile("^[ \xa0]*(?:[•·▪■●○◦§Ø"
-                        "ü–‐-]"
+_BULLET_RE = re.compile("^[ \xa0]*(?:[•·▪■●○◦§Ø¨*"
+                        "ü–‐-]"
                         r"|\(?(?:\d{1,3}|[a-zA-Z]|[ivxIVX]{1,5})[.)])[ \xa0\t]+")
 
 
-_LONE_BULLETS = set("•·▪■●○◦§Øü–‐-")
+_LONE_BULLETS = set("•·▪■●○◦§Ø¨*ü–‐-")
 
 
 def _keep_key_chars(runs: list, n: int) -> None:
@@ -1337,6 +1337,35 @@ def _line_width_pt(line: list) -> float:
         piece = r.text.rstrip() if r is line[-1] else r.text
         width += _run_text_width(r, piece) + (r.spacing_pt or 0.0) * len(piece)
     return width
+
+
+def _greedy_last_line(para, width: float) -> Optional[tuple]:
+    """A paragraph broken into lines at width (pt) word by word, as
+    Publisher breaks justified or left-aligned text it can't hyphenate:
+    (how many lines, where the last one starts in its text)."""
+    text = para.text()
+    if not text.strip() or width <= 0 or "\v" in text or "\t" in text:
+        return None
+    owner = [r for r in para.runs for _ in r.text]
+    words = [m.span() for m in re.finditer(r"\S+\s*", text)]
+
+    def wide(a, b):
+        out, i = 0.0, a
+        while i < b:
+            j = i
+            while j < b and owner[j] is owner[i]:
+                j += 1
+            out += _run_text_width(owner[i], text[i:j]) + (owner[i].spacing_pt or 0.0) * (j - i)
+            i = j
+        return out
+
+    lines, start, used = 1, words[0][0] if words else 0, 0.0
+    for a, b in words:
+        body = len(text[a:b].rstrip()) + a
+        if used and used + wide(a, body) > width:
+            lines, start, used = lines + 1, a, 0.0
+        used += wide(a, b)
+    return lines, start
 
 
 def _pub_wrap_indents(para) -> list:
@@ -2097,7 +2126,7 @@ class Converter:
         # in its overflow too
         self.pub_overflowed = bool(text[-1].pub.get("overflowAfter"))
         paras[:] = text
-        for i, p in enumerate(paras):
+        for i, p in reversed(list(enumerate(paras))):
             pitch = p.pub.get("lineUnseen")
             if not pitch or i + 1 >= len(paras):
                 continue
@@ -2107,6 +2136,27 @@ class Converter:
                                - rec["top"]) / pitch)), 1)
             p.pub = dict(rec, lineTops=[rec["top"] + k * pitch for k in range(n)],
                          height=n * pitch + after)
+            # text needing clearly fewer lines than that has wrapped around
+            # something in the way, its last line just above the next
+            # paragraph: that line goes there
+            frame = rec.get("frame")
+            fit = _greedy_last_line(p, frame[1] - frame[0] - float(rec.get("leftIndent") or 0.0)
+                                    - float(rec.get("rightIndent") or 0.0)) if frame else None
+            if fit and fit[0] >= 2 and fit[0] + 1 < n:
+                lines, cut = fit
+                head = dataclasses.replace(p, runs=[dataclasses.replace(r) for r in p.runs])
+                head.runs = _drop_prefix(head.runs, cut)
+                for r in reversed(head.runs):
+                    r.text = r.text.rstrip()
+                    if r.text:
+                        break
+                _drop_prefix(p.runs, cut)
+                head.space_after_pt = 0.0
+                head.pub = dict(rec, spaceAfter=0.0, height=(lines - 1) * pitch,
+                                lineTops=[rec["top"] + k * pitch for k in range(lines - 1)])
+                foot = rec["top"] + (n - 1) * pitch
+                p.pub = dict(rec, top=foot, lineTops=[foot], height=pitch + after)
+                paras.insert(i, head)
 
         def text_tops(p):
             """The paragraph's line tops, and how far its text's top is below
