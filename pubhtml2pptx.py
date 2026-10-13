@@ -476,6 +476,22 @@ def installed_fonts() -> dict:
     return _installed_fonts
 
 
+# the weights Windows uses, nearest first, for a regular face that isn't installed
+_REGULAR_STAND_INS = ("light", "medium", "semibold", "bold")
+
+
+def _font_file(name: str, style: str) -> Optional[str]:
+    """The font file for a lower-case face name and style ("bold italic",
+    or "" for regular). A family with no regular face (Perpetua Titling MT
+    has only Light and Bold) is drawn in its nearest weight."""
+    fname = ((installed_fonts().get(f"{name} {style}") if style else None)
+             or FONT_FILES.get(name) or installed_fonts().get(name))
+    if not fname and not style:
+        fname = next((installed_fonts()[f"{name} {w}"] for w in _REGULAR_STAND_INS
+                      if f"{name} {w}" in installed_fonts()), None)
+    return fname
+
+
 _family_installed: dict = {}
 
 
@@ -1283,25 +1299,27 @@ def _pub_tracking(p: "Para", rec: dict):
         run.spacing_pt = (tracking - 100.0) / 100.0 * avg * size
 
 
+def _run_text_width(r, piece: str) -> float:
+    """The width of some of a run's text in its font and capitals, without
+    its letter spacing."""
+    size = r.size_pt or 12.0
+    if r.caps == "small":
+        # lower case as capitals at a smaller size
+        small = "".join(ch for ch in piece if ch.islower())
+        return (text_width_px("".join(ch for ch in piece if not ch.islower()), r.font,
+                              size, bool(r.bold), bool(r.italic))
+                + text_width_px(small.upper(), r.font, size * SMALL_CAPS_SCALE,
+                                bool(r.bold), bool(r.italic)))
+    return text_width_px(piece.upper() if r.caps else piece, r.font, size,
+                         bool(r.bold), bool(r.italic))
+
+
 def _line_width_pt(line: list) -> float:
     """An estimate of a line's width, without the spaces at its end."""
     width = 0.0
     for r in line:
         piece = r.text.rstrip() if r is line[-1] else r.text
-        size = r.size_pt or 12.0
-        if r.caps == "small":
-            # lower case as capitals at a smaller size
-            small = "".join(ch for ch in piece if ch.islower())
-            width += (text_width_px("".join(ch for ch in piece if not ch.islower()), r.font,
-                                    size, bool(r.bold), bool(r.italic))
-                      + text_width_px(small.upper(), r.font, size * SMALL_CAPS_SCALE,
-                                      bool(r.bold), bool(r.italic))
-                      + (r.spacing_pt or 0.0) * len(piece))
-            continue
-        if r.caps:
-            piece = piece.upper()
-        width += (text_width_px(piece, r.font, size, bool(r.bold), bool(r.italic))
-                  + (r.spacing_pt or 0.0) * len(piece))
+        width += _run_text_width(r, piece) + (r.spacing_pt or 0.0) * len(piece)
     return width
 
 
@@ -1529,8 +1547,7 @@ def text_width_px(text: str, family: Optional[str], size_px: float,
         key = (name, style, round(size_px * 4))
         if key not in _font_cache:
             font = None
-            fname = ((installed_fonts().get(f"{name} {style}") if style else None)
-                     or FONT_FILES.get(name) or installed_fonts().get(name))
+            fname = _font_file(name, style)
             if fname:
                 # (PIL's own search of the fonts folder matches case, and
                 # Windows names some font files in capitals)
@@ -1567,8 +1584,7 @@ def _font_metrics(family: Optional[str], bold: bool = False,
     if key in _metrics_cache:
         return _metrics_cache[key]
     found = None
-    fname = ((installed_fonts().get(f"{name} {style}") if style else None)
-             or FONT_FILES.get(name) or installed_fonts().get(name))
+    fname = _font_file(name, style)
     if fname:
         path = fname if os.path.isabs(fname) else os.path.join(
             os.environ.get("WINDIR", r"C:\Windows"), "Fonts", fname)
@@ -3850,9 +3866,7 @@ def _line_tightening(para, width_pt: float) -> dict:
                 if j:
                     x = next_tab_px(x, line_stops, TAB_STOP_PT)
                     chars = 0
-                x += (text_width_px(seg, run.font, run.size_pt or 12.0, bool(run.bold),
-                                    bool(run.italic))
-                      * (1.0 + _keep_lines_slack(run.size_pt or 12.0))
+                x += (_run_text_width(run, seg) * (1.0 + _keep_lines_slack(run.size_pt or 12.0))
                       + (run.spacing_pt or 0.0) * len(seg))
                 chars += len(seg)
         pub_line = pub_text[cuts[i]:cuts[i + 1]].rstrip("\r\v\n") if pub_widths else ""
