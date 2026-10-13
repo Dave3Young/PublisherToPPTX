@@ -1227,9 +1227,10 @@ def _pub_best_fit(p: "Para", rec: dict):
 
 def _pub_tracking(p: "Para", rec: dict):
     """Publisher's tracking, which the HTML export leaves out, as letter
-    spacing on the runs that have none. Tracking is a percentage: each
-    point over 100 adds about a 250th of the font size after
-    every character."""
+    spacing on the runs that have none. Tracking is a percentage of the
+    font's average character width (OS/2's), so a narrow font gets less
+    space than the font size alone would give it; without the font file,
+    each point over 100 adds a 250th of the size."""
     try:
         tracking = float(rec.get("tracking") or 100.0)
     except (TypeError, ValueError):
@@ -1239,8 +1240,11 @@ def _pub_tracking(p: "Para", rec: dict):
         return
     for run in p.runs:
         size = run.size_pt or float(rec.get("size") or 0.0)
-        if run.spacing_pt is None and size > 0:
-            run.spacing_pt = (tracking - 100.0) / 250.0 * size
+        if run.spacing_pt is not None or size <= 0:
+            continue
+        m = _font_metrics(run.font or rec.get("font"), bool(run.bold), bool(run.italic))
+        avg = m["avg_width"] if m and m["avg_width"] > 0 else 0.4
+        run.spacing_pt = (tracking - 100.0) / 100.0 * avg * size
 
 
 def _line_width_pt(line: list) -> float:
@@ -1516,7 +1520,8 @@ _metrics_cache: dict = {}
 
 def _font_metrics(family: Optional[str], bold: bool = False,
                   italic: bool = False) -> Optional[dict]:
-    """A font's vertical metrics, per point of size: OS/2 typo ascender,
+    """A font's metrics, per point of size: its average character width
+    (avg_width), OS/2 typo ascender,
     descender and line gap (typo), the same from hhea (hhea), Windows ascent
     and descent (win), the OS/2 table's version, and its code page bits.
     None if the font file can't be read."""
@@ -1544,6 +1549,7 @@ def _font_metrics(family: Optional[str], bold: bool = False,
             os2, hhea = tables[b"OS/2"], tables[b"hhea"]
             found = dict(
                 version=struct.unpack(">H", data[os2:os2 + 2])[0],
+                avg_width=struct.unpack(">h", data[os2 + 2:os2 + 4])[0] / upm,
                 typo=tuple(v / upm for v in struct.unpack(">hhh", data[os2 + 68:os2 + 74])),
                 win=tuple(v / upm for v in struct.unpack(">HH", data[os2 + 74:os2 + 78])),
                 hhea=tuple(v / upm for v in struct.unpack(">hhh", data[hhea + 4:hhea + 10])),
