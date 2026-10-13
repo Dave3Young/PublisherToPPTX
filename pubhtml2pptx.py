@@ -1184,6 +1184,7 @@ def _pub_line_breaks(para, rec: dict) -> bool:
 # Lines starting this far (pt) from where their frame and indents put them
 # have wrapped around a picture or another frame
 WRAP_SHIFT_PT = 6.0
+SMALL_CAPS_SCALE = 0.75                # a small capital's size, of the text's (measured)
 PB_TEXT_FRAME = 17                     # PbShapeType of a plain text box
 
 
@@ -1247,9 +1248,19 @@ def _line_width_pt(line: list) -> float:
     width = 0.0
     for r in line:
         piece = r.text.rstrip() if r is line[-1] else r.text
+        size = r.size_pt or 12.0
+        if r.caps == "small":
+            # lower case as capitals at a smaller size
+            small = "".join(ch for ch in piece if ch.islower())
+            width += (text_width_px("".join(ch for ch in piece if not ch.islower()), r.font,
+                                    size, bool(r.bold), bool(r.italic))
+                      + text_width_px(small.upper(), r.font, size * SMALL_CAPS_SCALE,
+                                      bool(r.bold), bool(r.italic))
+                      + (r.spacing_pt or 0.0) * len(piece))
+            continue
         if r.caps:
             piece = piece.upper()
-        width += (text_width_px(piece, r.font, r.size_pt or 12.0, bool(r.bold), bool(r.italic))
+        width += (text_width_px(piece, r.font, size, bool(r.bold), bool(r.italic))
                   + (r.spacing_pt or 0.0) * len(piece))
     return width
 
