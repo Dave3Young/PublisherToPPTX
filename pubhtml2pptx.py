@@ -844,6 +844,40 @@ def _pub_cut(rec: dict, n: int) -> dict:
     return out
 
 
+def _pub_tail(rec: dict, n: int) -> Optional[dict]:
+    """A copy of a paragraph's record from its last n non-whitespace
+    characters on, with the lines from there, for the part of a paragraph
+    that runs on into a linked text box. None unless a line starts there."""
+    text = str(rec.get("text", ""))
+    seen, cut = 0, None
+    for i in range(len(text) - 1, -1, -1):
+        if not text[i].isspace():
+            seen += 1
+            if seen == n:
+                cut = i
+                break
+    starts = rec.get("lineStarts") or []
+    tops, lefts = rec.get("lineTops") or [], rec.get("lineLefts") or []
+    if cut is None or len(tops) != len(starts) or len(lefts) != len(starts):
+        return None
+    begin = len(text[:cut].encode("utf-16-le")) // 2
+    if begin not in starts[1:]:
+        return None
+    k0 = starts.index(begin)
+    out = dict(rec, text=text[cut:], spaceBefore=0.0, firstIndent=0.0,
+               lineStarts=[s - begin for s in starts[k0:]],
+               lineJumps=[[j[0] - begin, j[1]] for j in rec.get("lineJumps") or []
+                          if j[0] >= begin],
+               lineTops=tops[k0:], lineLefts=lefts[k0:], top=tops[k0], left=lefts[k0],
+               at=None)
+    widths = rec.get("lineWidths") or []
+    out["lineWidths"] = widths[k0:] if len(widths) == len(starts) else []
+    gaps = sorted(b - a for a, b in zip(out["lineTops"], out["lineTops"][1:]))
+    out["height"] = out["lineTops"][-1] + (gaps[len(gaps) // 2] if gaps else
+                                          float(rec.get("size") or 12.0) * 1.2) - tops[k0]
+    return out
+
+
 def _pub_text_area(shape: dict, pars: list):
     """A frame's text area (left, right in pt), where its lines start unless
     they wrap around something; None if unknown. An autoshape keeps its text
@@ -1729,6 +1763,9 @@ class Converter:
                 else:
                     # a paragraph running on into a linked text box
                     head, at = self.pub_find_continued(pub_key(p.text()), region)
+                    if not head:
+                        # or the rest of one that started in another
+                        head, at = self.pub_find_tail(pub_key(p.text()), region)
                     if head:
                         rec, placed = head, at
             if rec and rec.get("frame") and text_area:
@@ -1853,6 +1890,29 @@ class Converter:
                 if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
                     self.pub_claimed.add(id(rec))
                     return _pub_cut(rec, len(key)), True
+        return None, False
+
+    def pub_find_tail(self, key: str, region):
+        """A record whose text ends with key, its lines from there inside
+        region, for the part of a paragraph that runs on into a linked text
+        box, where the export starts a paragraph of its own. Returns a copy cut
+        to key's text; the record isn't claimed (its start is another box's)."""
+        if len(key) < 20:
+            return None, False
+        x0, y0, x1, y1 = region
+        tol = 3.0
+        for k, recs in self.pub_text.items():
+            if len(k) <= len(key) or not k.endswith(key):
+                continue
+            for rec in recs:
+                if rec.get("page", 0) not in (0, self.page):
+                    continue
+                tail = _pub_tail(rec, len(key))
+                if tail is None:
+                    continue
+                rx, ry = tail["left"] * self.dpi / 72.0, tail["top"] * self.dpi / 72.0
+                if x0 - tol <= rx <= x1 + tol and y0 - tol <= ry <= y1 + tol:
+                    return tail, True
         return None, False
 
     def _pub_place(self, paras: list, bottom: Optional[float] = None):
