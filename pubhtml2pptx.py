@@ -2134,6 +2134,32 @@ class Converter:
         # in its overflow too
         self.pub_overflowed = bool(text[-1].pub.get("overflowAfter"))
         paras[:] = text
+        # first lines holding only spaces, in a gap beside something the text
+        # wraps around: PowerPoint keeps the next word on the line, so the
+        # paragraph starts on the line after, without the spaces
+        for p in paras:
+            rec = p.pub
+            whole = str(rec.get("text", ""))
+            starts, tops = rec.get("lineStarts") or [], rec.get("lineTops") or []
+            lefts = rec.get("lineLefts") or []
+            if len(starts) < 2 or len(tops) != len(starts) or len(lefts) != len(starts)                     or rec.get("top") is None:
+                continue
+            k = 0
+            while k + 1 < len(starts) and not whole[:_utf16_index(whole, starts[k + 1])].strip():
+                k += 1
+            if not k:
+                continue
+            begin = starts[k]
+            _drop_prefix(p.runs, len(p.text()) - len(p.text().lstrip()))
+            widths = rec.get("lineWidths") or []
+            p.pub = dict(rec, text=whole[_utf16_index(whole, begin):], spaceBefore=0.0,
+                         firstIndent=0.0, lineStarts=[x - begin for x in starts[k:]],
+                         lineJumps=[[j[0] - begin, j[1]] for j in rec.get("lineJumps") or []
+                                    if j[0] >= begin],
+                         lineTops=tops[k:], lineLefts=lefts[k:],
+                         lineWidths=widths[k:] if len(widths) == len(starts) else [],
+                         top=tops[k], left=lefts[k],
+                         height=float(rec.get("height") or 0.0) - (tops[k] - float(rec["top"])))
         for i, p in reversed(list(enumerate(paras))):
             pitch = p.pub.get("lineUnseen")
             if not pitch or i + 1 >= len(paras):
@@ -2150,7 +2176,11 @@ class Converter:
             frame = rec.get("frame")
             fit = _greedy_last_line(p, frame[1] - frame[0] - float(rec.get("leftIndent") or 0.0)
                                     - float(rec.get("rightIndent") or 0.0)) if frame else None
-            if fit and fit[0] >= 2 and fit[0] + 1 < n:
+            if fit and fit[0] == 1 and n > 2:
+                # all of it on that line
+                foot = rec["top"] + (n - 1) * pitch
+                p.pub = dict(rec, top=foot, lineTops=[foot], height=pitch + after)
+            elif fit and fit[0] >= 2 and fit[0] + 1 < n:
                 lines, cut = fit
                 head = dataclasses.replace(p, runs=[dataclasses.replace(r) for r in p.runs])
                 head.runs = _drop_prefix(head.runs, cut)
