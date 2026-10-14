@@ -3221,8 +3221,9 @@ class Converter:
                     and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
 
         lower = [shapes.get(ids.get(d)) for d in drawn if d < min(mine)]
-        if not any(s and s["solid"] and any(meets(s["rect"], m["rect"]) for m in me)
-                   for s in lower):
+        # a line beneath hides nothing
+        if not any(s and s["solid"] and not s.get("line")
+                   and any(meets(s["rect"], m["rect"]) for m in me) for s in lower):
             return []
         upper = [shapes.get(ids.get(d)) for d in drawn if d > max(mine)]
         if any(s is None or (s["solid"] and not s["plain"]) for s in upper):
@@ -3736,7 +3737,13 @@ def _vml_group_parts(group: Tag, pics: list) -> Optional[list]:
                 continue
             return None
         cd = parse_decls(child.get("style", ""))
-        if cd.get("rotation") or child.find("v:textpath"):
+        data = child.find("v:imagedata", recursive=False)
+        try:
+            turn = float(str(cd.get("rotation") or 0).rstrip("fd ")) % 360
+        except ValueError:
+            return None
+        # stage 1 saves a picture turned by a right angle as it shows
+        if (turn and (turn % 90 or data is None or not data.get("src")))                 or child.find("v:textpath"):
             return None
         try:
             rect = (gl + (float(cd["left"]) - ox) * gw / cw,
@@ -3745,8 +3752,17 @@ def _vml_group_parts(group: Tag, pics: list) -> Optional[list]:
         except (KeyError, ValueError):
             return None
         box = child.find("v:textbox", recursive=False)
-        data = child.find("v:imagedata", recursive=False)
-        if box is not None and box.get_text(strip=True):
+        if turn:
+            fits = [(misfit, pic) for pic in pics if abs(pic["rotation"] % 360 - turn) < 0.5
+                    for misfit in [_place_misfit(*rect, pic)] if misfit is not None]
+            if not fits:
+                return None
+            l, t, w, h = rect
+            if turn % 180:
+                # its place as it shows, the frame's turned about its centre
+                rect = (l + (w - h) / 2, t + (h - w) / 2, h, w)
+            parts.append(("img", child, rect, min(fits, key=lambda f: f[0])[1]))
+        elif box is not None and box.get_text(strip=True):
             outline = _vml_outline(child)
             if outline is None or "layout-flow" in str(box.get("style", "")):
                 return None
@@ -3794,9 +3810,11 @@ def restore_vml_groups(soup: BeautifulSoup, pics: Optional[list], page: int) -> 
             if group.find_parent("v:group"):
                 continue
             parts = _vml_group_parts(group, pics)
+            # a group of pictures alone comes back sharp from stage 1's
             if (parts and any(p[0] == "img" for p in parts)
-                    and any(p[0] == "text" and p[3] is not None and p[3].get_text(strip=True)
-                            for p in parts)):
+                    and (all(p[0] == "img" for p in parts)
+                         or any(p[0] == "text" and p[3] is not None
+                                and p[3].get_text(strip=True) for p in parts))):
                 found[group.get("id")] = (parts, parse_decls(group.get("style", "")).get("z-index"),
                                           group)
     count = 0
@@ -3887,8 +3905,27 @@ def vml_group_shapes(soup: BeautifulSoup) -> dict:
             if not (gw and gh and cw and ch):
                 continue
             shapes[group.get("id")] = dict(rect=(gl, gt, gw, gh))
-            for child in group.find_all(VML_SHAPES, recursive=False):
+            for child in group.find_all(VML_SHAPES + ["v:line"], recursive=False):
                 cd = parse_decls(child.get("style", ""))
+                if child.name == "v:line":
+                    # a level or upright line is the band its pen covers
+                    try:
+                        (x1, y1), (x2, y2) = (
+                            (float(v) for v in str(child.get(end) or "").split(","))
+                            for end in ("from", "to"))
+                    except ValueError:
+                        continue
+                    if (x1 != x2 and y1 != y2) or cd.get("rotation"):
+                        continue
+                    pen = _vml_pt(child.get("strokeweight"), 0.75)
+                    l, t = gl + (min(x1, x2) - ox) * gw / cw, gt + (min(y1, y2) - oy) * gh / ch
+                    w, h = abs(x2 - x1) * gw / cw, abs(y2 - y1) * gh / ch
+                    shapes[child.get("id")] = dict(
+                        rect=(l - pen / 2 if not w else l, t - pen / 2 if not h else t,
+                              w or pen, h or pen),
+                        group=group.get("id"), plain=True, line=True,
+                        solid=str(child.get("stroked", "t")).lower() not in ("f", "false"))
+                    continue
                 try:
                     rect = (gl + (float(cd["left"]) - ox) * gw / cw,
                             gt + (float(cd["top"]) - oy) * gh / ch,
