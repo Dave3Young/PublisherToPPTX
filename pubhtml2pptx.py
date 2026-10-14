@@ -1780,7 +1780,9 @@ def pub_first_baseline(family: Optional[str], bold: bool = False,
                        italic: bool = False) -> Optional[float]:
     """Where Publisher puts the first baseline at single spacing, below the
     top of the line, per point of size: the ascender and the whole line gap,
-    from the table its single spacing comes from (measured). PowerPoint puts
+    from the table its single spacing comes from (measured), but for a font
+    spaced by its hhea table no higher than its Windows ascent (Pristina,
+    Blackadder ITC, Perpetua Titling MT, measured). PowerPoint puts
     it where it puts any font's at that percentage, but below 100% no lower
     than the font's Windows ascent: about the same place for a font with no
     line gap, but higher for one with a large gap. None if the font file
@@ -1788,7 +1790,10 @@ def pub_first_baseline(family: Optional[str], bold: bool = False,
     m = _font_metrics(family, bold, italic)
     if not m or m["pages"] & (0b11111 << 17):
         return None
-    asc, _, gap = _pub_line_table(m)
+    table = _pub_line_table(m)
+    asc, _, gap = table
+    if table is m["hhea"]:
+        return max(asc + max(gap, 0.0), m["win"][0])
     return asc + max(gap, 0.0)
 
 
