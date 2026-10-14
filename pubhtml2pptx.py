@@ -4274,6 +4274,11 @@ def _ppt_size(run, para) -> Optional[float]:
     return min(size, max(others)) if others else size
 
 
+def _ppt_percent(multiple: float) -> float:
+    """The line spacing multiple PowerPoint lays out: to a whole percent."""
+    return math.floor(multiple * 100 + 0.5) / 100
+
+
 def _line_sizes(para) -> set:
     """The largest font size on each line of a paragraph, spaces included;
     None for a run with no size."""
@@ -4476,14 +4481,27 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose, scale=1.0):
             if para.align is not None:
                 p.alignment = para.align
             sizes = _line_sizes(para)
+            # PowerPoint lays lines out on a multiple rounded to a whole
+            # percent, and on points rounded to whole points: each line's
+            # share of the difference goes into the paragraph's space after
+            line_list = _line_size_list(para)
+            if not para.keep_lines:
+                line_list = line_list[:1] * len((para.pub or {}).get("lineTops") or [])
             if para.line_multiple:
                 p.line_spacing = para.line_multiple
+                if None not in line_list:
+                    carry += sum((para.line_multiple - _ppt_percent(para.line_multiple)) * 1.2 * s
+                                 for s in line_list)
             elif para.exact_line_pt and len(sizes) == 1 and None not in sizes:
-                # a multiple isn't rounded: PowerPoint's single spacing is
-                # 1.2 times the largest font size on the line, whatever the font
-                p.line_spacing = para.exact_line_pt / (1.2 * sizes.pop())
+                # PowerPoint's single spacing is 1.2 times the largest font
+                # size on the line, whatever the font
+                size = sizes.pop()
+                p.line_spacing = para.exact_line_pt / (1.2 * size)
+                carry += len(line_list) * (para.exact_line_pt
+                                           - _ppt_percent(p.line_spacing) * 1.2 * size)
             elif para.exact_line_pt:
                 p.line_spacing = Pt(para.exact_line_pt)
+                carry += len(line_list) * (para.exact_line_pt - math.floor(para.exact_line_pt + 0.5))
             elif para.line_spacing:
                 p.line_spacing = para.line_spacing
             if "\t" in para.text():
