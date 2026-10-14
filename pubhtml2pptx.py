@@ -1376,6 +1376,41 @@ def _greedy_last_line(para, width: float) -> Optional[tuple]:
     return lines, start
 
 
+def _pub_overflow_cut(para, rec: dict) -> Optional[int]:
+    """Where Publisher's text ends in a paragraph its frame's overflow cuts
+    short: stage 1 records the whole text, but only the lines it shows. The
+    last one ends at the word whose end is nearest its measured width. How
+    many non-whitespace characters it shows, or None if it shows them all
+    (or the cut isn't clear)."""
+    starts = rec.get("lineStarts") or []
+    widths = rec.get("lineWidths") or []
+    text = para.text()
+    if (not rec.get("overflowAfter") or not starts or len(widths) != len(starts)
+            or text.rstrip() != str(rec.get("text", "")).rstrip()
+            or "\v" in text or "\t" in text):
+        return None
+    owner = [r for r in para.runs for _ in r.text]
+    first = _utf16_index(text, starts[-1])
+    target = float(widths[-1])
+    ends, used, i = [], 0.0, first
+    for m in re.finditer(r"\S+", text[first:]):
+        a, b = first + m.start(), first + m.end()
+        used += sum(_run_text_width(owner[k], text[k]) + (owner[k].spacing_pt or 0.0)
+                    for k in range(i, b))
+        ends.append((b, used))
+        i = b
+    if len(ends) < 2:
+        return None
+    size = max((r.size_pt or 12.0 for r in para.runs if r.text.strip()), default=12.0)
+    tol = max(0.6 * size, 0.04 * target)
+    if ends[-1][1] <= target + tol:
+        return None                        # the line holds the rest
+    cut, wide = min(ends, key=lambda e: abs(e[1] - target))
+    if abs(wide - target) > tol or cut == ends[-1][0]:
+        return None
+    return len(pub_key(text[:cut]))
+
+
 def _pub_jump_tail(para) -> Optional["Para"]:
     """A paragraph on Publisher's lines whose lines jump down part way, past
     a picture across the frame, spaces evenly in PowerPoint, from its first
@@ -2016,6 +2051,13 @@ class Converter:
                 # lines are indented from where the box's text starts
                 rec = dict(rec, frame=tuple(v * 72.0 / self.dpi for v in text_area))
             if rec and apply_pub_whitespace(p.runs, rec["text"]):
+                shown = _pub_overflow_cut(p, rec)
+                if shown:
+                    # the rest of it is in the frame's overflow, which Publisher hides
+                    self.warn(f"dropped the end of a paragraph in a text box's overflow, "
+                              f"which Publisher hides: {p.text()[:40]!r}")
+                    _keep_key_chars(p.runs, shown)
+                    rec = dict(_pub_cut(rec, shown), spaceAfter=rec.get("spaceAfter", 0.0))
                 p.tab_stops = [(t.get("pos", 0.0), t.get("align", 0))
                                for t in rec.get("tabs") or []]
                 p.pub, p.pub_placed = rec, placed
