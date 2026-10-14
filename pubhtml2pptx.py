@@ -587,6 +587,9 @@ _BULLET_RE = re.compile("^[ \xa0]*(?:[•·▪■●○◦§Ø¨*"
 
 _LONE_BULLETS = set("•·▪■●○◦§Ø¨*ü–‐-")
 
+# a tab leader as the export writes it: a run of underscores, dots or dashes
+_LEADER_RE = re.compile(r"_{3,}|\.{3,}|-{3,}|·{3,}")
+
 
 def _keep_key_chars(runs: list, n: int) -> None:
     """Cuts a paragraph's runs after its first n non-whitespace characters."""
@@ -1529,13 +1532,17 @@ KEEP_LINES_MAX_SPC = 0.05
 # hinting rounds each letter by a fraction of a pixel, whatever its size: a
 # huge heading's share of the width would squeeze it far past what that takes
 KEEP_LINES_SLACK_CHAR_PT = 0.3
+# a fixed-pitch font's letters keep its one width, as Publisher sets them,
+# though PowerPoint rounds it up a little (Lucida Sans Typewriter at 96.8 pt:
+# 58.375 pt a letter against 58.28); small text needs none, and would only
+# be tightened more
+KEEP_LINES_SLACK_FIXED = 0.003
 
 
 def _keep_lines_slack(size_pt: float, font: Optional[str] = None) -> float:
-    # a fixed-pitch font's letters keep its one width, as Publisher sets them
     m = _font_metrics(font) if font else None
     if m and m.get("fixed"):
-        return 0.0
+        return KEEP_LINES_SLACK_FIXED if size_pt >= KEEP_LINES_LARGE_PT else 0.0
     return KEEP_LINES_SLACK if size_pt < KEEP_LINES_LARGE_PT else KEEP_LINES_SLACK_LARGE
 
 
@@ -1959,6 +1966,8 @@ class Converter:
                 rec, placed = self.pub_find(pub_key(p.text()[bullet.end():]), region)
                 if rec:
                     bullet_runs = _drop_prefix(p.runs, bullet.end())
+            if rec is None:
+                rec, placed = self.pub_find_leaders(p.text(), region)
             if not placed and region is not None:
                 # a paragraph running into the overflow: Publisher's text is
                 # only its visible start, so keep just that (the whole text
@@ -2049,6 +2058,35 @@ class Converter:
                 self.pub_claimed.add(id(rec))
                 return rec, True
         return recs[0], False
+
+    def pub_find_leaders(self, text: str, region=None):
+        """pub_find for a paragraph whose tabs have leaders: the export writes
+        each such tab as its leader's characters ("Name______"), Publisher's
+        text as a tab. Returns the record with those tabs swapped for the
+        leaders (which PowerPoint can't draw), so the words match."""
+        leaders = _LEADER_RE.findall(text)
+        if not leaders:
+            return None, False
+        rec, placed = self.pub_find(pub_key(_LEADER_RE.sub("", text)), region)
+        if rec is None:
+            return None, False
+        whole = str(rec.get("text", ""))
+        if whole.count("\t") != len(leaders):
+            self.pub_claimed.discard(id(rec))
+            return None, False
+        parts = whole.split("\t")
+        out, shifts = parts[0], []
+        for lead, part in zip(leaders, parts[1:]):
+            # UTF-16 offset of the tab, and how much longer the text gets there
+            shifts.append((len(out.encode("utf-16-le")) // 2, len(lead) - 1))
+            out += lead + part
+
+        def moved(x):
+            return x + sum(d for at, d in shifts if at < x)
+        rec = dict(rec, text=out,
+                   lineStarts=[moved(x) for x in rec.get("lineStarts") or []],
+                   lineJumps=[[moved(j[0]), j[1]] for j in rec.get("lineJumps") or []])
+        return rec, placed
 
     def pub_blank_frame(self, x: float, y: float, w: float, h: float) -> bool:
         """True if stage 1 saw a text frame here (px) showing no text: all
