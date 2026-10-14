@@ -61,6 +61,7 @@ import re
 import struct
 import sys
 import glob as globmod
+import io
 import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional
@@ -420,6 +421,7 @@ class Box:
     z: Optional[int] = None        # z-index of the positioned shape it came from
     columns: int = 1               # text: columns the text flows through
     column_gap: float = 0.0        # text: space between them
+    hide: tuple = ()               # image: (x, y, w, h) parts covered by shapes above it
 
 
 # Font files for measuring inline text. ImageFont.truetype finds these in
@@ -556,6 +558,9 @@ PUB_GILL_SANS_DROP = 0.25
 # Gill Sans MT at exact spacing in Publisher: (descent, share of the line
 # above the baseline), measured; its font tables give neither
 PUB_GILL_SANS_EXACT = (0.33, 0.755)
+# The smallest size whose first baseline pct_lift moves for a tall font with
+# no line gap, in pt
+PUB_TALL_LINE_MIN_SIZE = 36.0
 
 
 # ----------------------------------------------------------------------------
@@ -1368,6 +1373,61 @@ def _greedy_last_line(para, width: float) -> Optional[tuple]:
     return lines, start
 
 
+def _pub_jump_tail(para) -> Optional["Para"]:
+    """A paragraph on Publisher's lines whose lines jump down part way, past
+    a picture across the frame, spaces evenly in PowerPoint, from its first
+    line to its last. Splits the lines from the jump off into a paragraph of
+    its own, each part placed at Publisher's top, and returns it; None,
+    changing nothing, if its lines don't jump (a tall first line is
+    text_tops') or it is bulleted. A justified paragraph's lines before the
+    jump are all full ones, so they are spread to the edges, last one too."""
+    rec = para.pub or {}
+    tops, starts = rec.get("lineTops") or [], rec.get("lineStarts") or []
+    text = para.text()
+    if (not para.keep_lines or para.bullet or len(tops) < 3 or len(starts) != len(tops)
+            or text.count("\v") != len(tops) - 1 or rec.get("top") is None):
+        return None
+    gaps = [b - a for a, b in zip(tops, tops[1:])]
+    pitch = sorted(gaps)[len(gaps) // 2]
+    j = next((k + 1 for k, g in enumerate(gaps) if k and g > 2 * pitch and g - pitch > 6.0), None)
+    if pitch <= 0 or j is None:
+        return None
+    k = -1
+    for _ in range(j):
+        k = text.index("\v", k + 1)
+    tail = dataclasses.replace(para, runs=[dataclasses.replace(r) for r in para.runs],
+                               indent_pt=0.0)
+    head = _drop_prefix(tail.runs, k + 1)
+    head[-1].text = head[-1].text[:-1]
+    para.runs = [r for r in head if r.text] or head[:1]
+    para.space_after_pt = 0.0
+    if para.align == PP_ALIGN.JUSTIFY:
+        para.align = PP_ALIGN.DISTRIBUTE
+    pub_text = str(rec.get("text", ""))
+    cut = _utf16_index(pub_text, starts[j])
+    foot = float(rec["top"]) + float(rec.get("height") or 0.0)
+
+    def part(lo, hi):
+        out = {}
+        for name in ("lineLefts", "lineWidths"):
+            vals = rec.get(name) or []
+            out[name] = vals[lo:hi] if len(vals) == len(starts) else []
+        out["lineJumps"] = [[s - starts[lo], x] for s, x in rec.get("lineJumps") or []
+                            if (s >= starts[j]) == (lo > 0)]
+        return out
+
+    para.pub = dict(rec, text=pub_text[:cut], spaceAfter=0.0, lineStarts=starts[:j],
+                    lineTops=tops[:j], height=tops[j - 1] + pitch - float(rec["top"]),
+                    **part(0, j))
+    tail.pub = dict(rec, text=pub_text[cut:], spaceBefore=0.0, firstIndent=0.0,
+                    lineStarts=[s - starts[j] for s in starts[j:]], lineTops=tops[j:],
+                    top=tops[j], height=foot - tops[j], **part(j, None))
+    lefts = tail.pub.get("lineLefts") or []
+    if lefts:
+        tail.pub["left"] = lefts[0]
+    return tail
+
+
 def _pub_wrap_indents(para) -> list:
     """Moves the lines Publisher wraps around a picture or another frame to
     where stage 1 saw them start (lineLefts). PowerPoint has no indent for a
@@ -1573,13 +1633,17 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
         # where the two put it at single spacing, where that isn't the same
         # place: a font with a line gap. Publisher's line a little off the
         # font's single spacing keeps its baseline, but PowerPoint's moves,
-        # and jumps up just past 100%
+        # and jumps up just past 100%. Large text in a font with no gap whose
+        # lines are taller than PowerPoint's, which puts the baseline above
+        # the font's ascent, sits lower in Publisher too (measured; smaller
+        # text doesn't)
         gap = _pub_line_table(m)[2] if m else 0.0
-        if single and first is not None and gap > 0:
+        if single and first is not None and (gap > 0 or single > 1.2):
             ppt = ppt_first_baseline((ratio if abs(ratio / single - 1.0) <= 0.03 else single) / 1.2)
             if single < 1.2:
                 ppt = min(ppt, m["win"][0])
-            lift -= (first - ppt) * size
+            if gap > 0 or (first > ppt and size >= PUB_TALL_LINE_MIN_SIZE):
+                lift -= (first - ppt) * size
     name = (font_name(font) or "").lower()
     if multiple > 1.0 and name.startswith("gill sans") and "ultra" not in name:
         lift -= PUB_GILL_SANS_DROP_MULTIPLE * size
@@ -2195,6 +2259,10 @@ class Converter:
                 foot = rec["top"] + (n - 1) * pitch
                 p.pub = dict(rec, top=foot, lineTops=[foot], height=pitch + after)
                 paras.insert(i, head)
+        for i, p in reversed(list(enumerate(paras))):
+            tail = _pub_jump_tail(p)
+            if tail is not None:
+                paras.insert(i + 1, tail)
 
         def text_tops(p):
             """The paragraph's line tops, and how far its text's top is below
@@ -3011,8 +3079,9 @@ class Converter:
         start = len(boxes)
         self._emit_node(el, sheet, own_style, origin, cb_w, cb_h, boxes, stop_nodes)
         own = boxes[start:]
-        under = self._shapes_before_picture(el, shape_children) if own else set()
+        under, hides = self._shapes_before_picture(el, shape_children) if own else (set(), {})
         below = []
+        pic_box = next((b for b in own if b.kind == "image"), None)
 
         for child in shape_children:
             cstyle = computed_style(child, sheet, own_style)
@@ -3033,6 +3102,15 @@ class Converter:
                 self.walk(child, sheet, cstyle, (x, y), new_w, new_h, boxes, depth + 1)
             if id(child) in under:
                 below += boxes[first:]
+            elif id(child) in hides and pic_box is not None:
+                # on top of the group's picture, less what covers it there
+                (gl, gt, _, _), rects = hides[id(child)]
+                k = self.dpi / 72.0
+                hide = tuple((pic_box.x + (l - gl) * k, pic_box.y + (t - gt) * k, w * k, h * k)
+                             for l, t, w, h in rects)
+                for b in boxes[first:]:
+                    if b.kind == "image":
+                        b.hide = hide
             # Publisher's stacking order is the z-index, not the order in the file
             try:
                 z = int(str(cstyle.get("z-index") or "").strip())
@@ -3069,13 +3147,44 @@ class Converter:
         # the picture's first shape is the group itself, ahead of its children
         drawn = places(pic)[1:] if pic is not None else []
         if not drawn:
-            return set()
-        under = set()
+            return set(), {}
+        shapes = getattr(self, "vml_shapes", None) or {}
+        ids = {v: k for k, v in order.items()}
+        group = shapes.get(ids.get(places(pic)[0]))
+        under, hides = set(), {}
         for child in shape_children:
             mine = places(child)
             if mine and 2 * sum(1 for d in drawn if d > max(mine)) > len(drawn):
-                under.add(id(child))
-        return under
+                hide = self._hide_from_picture(mine, drawn, ids, shapes) if group else []
+                if hide:
+                    hides[id(child)] = (group["rect"], hide)
+                else:
+                    under.add(id(child))
+        return under, hides
+
+    @staticmethod
+    def _hide_from_picture(mine, drawn, ids, shapes) -> list:
+        """For a group member that goes beneath most of the shapes in the
+        group's picture but above a filled one there, which would hide it,
+        the places in pt of the filled shapes above it, all plain rectangles,
+        to cut out of it instead when it goes on top. [] if there are none
+        or one is another shape."""
+        me = [shapes.get(ids.get(m)) for m in mine]
+        if not me or None in me:
+            return []
+
+        def meets(a, b):
+            return (a[0] < b[0] + b[2] and b[0] < a[0] + a[2]
+                    and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
+
+        lower = [shapes.get(ids.get(d)) for d in drawn if d < min(mine)]
+        if not any(s and s["solid"] and any(meets(s["rect"], m["rect"]) for m in me)
+                   for s in lower):
+            return []
+        upper = [shapes.get(ids.get(d)) for d in drawn if d > max(mine)]
+        if any(s is None or (s["solid"] and not s["plain"]) for s in upper):
+            return []
+        return [s["rect"] for s in upper if s["solid"]]
 
     def _emit_node(self, el: Tag, sheet: StyleSheet, style: dict,
                    origin, cb_w, cb_h, boxes: list, stop_nodes: set) -> float:
@@ -3712,6 +3821,48 @@ def vml_shape_order(soup: BeautifulSoup) -> dict:
     return order
 
 
+def vml_group_shapes(soup: BeautifulSoup) -> dict:
+    """Each top-level VML group's place in pt by its id, and each of its
+    children's by theirs, with whether the child is filled ("solid") and is
+    an unrotated rectangle ("rect"). Rotated groups are left out."""
+    shapes = {}
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "vml" in t[:30]):
+        vml = BeautifulSoup(str(c), "html.parser")
+        for group in vml.find_all("v:group"):
+            if group.find_parent("v:group"):
+                continue
+            decl = parse_decls(group.get("style", ""))
+            if decl.get("rotation"):
+                continue
+            gl, gt = _vml_pt(decl.get("left")), _vml_pt(decl.get("top"))
+            gw, gh = _vml_pt(decl.get("width")), _vml_pt(decl.get("height"))
+            try:
+                ox, oy = (float(v) for v in str(group.get("coordorigin") or "0,0").split(","))
+                cw, ch = (float(v) for v in str(group.get("coordsize") or "1000,1000").split(","))
+            except ValueError:
+                continue
+            if not (gw and gh and cw and ch):
+                continue
+            shapes[group.get("id")] = dict(rect=(gl, gt, gw, gh))
+            for child in group.find_all(VML_SHAPES, recursive=False):
+                cd = parse_decls(child.get("style", ""))
+                try:
+                    rect = (gl + (float(cd["left"]) - ox) * gw / cw,
+                            gt + (float(cd["top"]) - oy) * gh / ch,
+                            float(cd["width"]) * gw / cw, float(cd["height"]) * gh / ch)
+                except (KeyError, ValueError):
+                    continue
+                fill = child.find("v:fill", recursive=False)
+                solid = (str(child.get("filled", "t")).lower() not in ("f", "false")
+                         and str((fill or {}).get("on", "t")).lower() not in ("f", "false")
+                         and str((fill or {}).get("opacity", "1")).strip() in ("1", "1.0", "")
+                         and not child.find("v:imagedata"))
+                shapes[child.get("id")] = dict(
+                    rect=rect, group=group.get("id"), solid=solid,
+                    plain=child.name == "v:rect" and not cd.get("rotation"))
+    return shapes
+
+
 def restore_vml_inline_text_boxes(soup: BeautifulSoup) -> dict:
     """Publisher exports a text box placed in another one's text as a picture
     of it, right after the VML that keeps its real text. Marks each such
@@ -4103,6 +4254,29 @@ def scale_slide(slide, s: float):
                 el.set(name, str(max(v, 100) if name == "sz" else v))
 
 
+def _hidden_parts_cut(path, b, warn):
+    """The picture at path with the parts b.hide says are covered made
+    transparent, as a PNG in memory; path itself if it can't be read."""
+    try:
+        with Image.open(path) as im:
+            im = im.convert("RGBA")
+    except Exception as exc:                           # noqa: BLE001
+        warn(f"could not read {os.path.basename(path)}: {exc}")
+        return path
+    sx, sy = im.width / max(b.w, 1.0), im.height / max(b.h, 1.0)
+    clear = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    for x, y, w, h in b.hide:
+        box = (int(round((x - b.x) * sx)), int(round((y - b.y) * sy)),
+               int(round((x + w - b.x) * sx)), int(round((y + h - b.y) * sy)))
+        box = (max(box[0], 0), max(box[1], 0), min(box[2], im.width), min(box[3], im.height))
+        if box[0] < box[2] and box[1] < box[3]:
+            im.paste(clear.crop(box), box)
+    out = io.BytesIO()
+    im.save(out, "PNG")
+    out.seek(0)
+    return out
+
+
 def build_slide(prs, boxes, resolver, dpi, warn, verbose, scale=1.0):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     # the page before scale_slide shrinks it to fit
@@ -4122,10 +4296,12 @@ def build_slide(prs, boxes, resolver, dpi, warn, verbose, scale=1.0):
             path = resolver.resolve(b.src)
             if not path:
                 continue
+            if b.hide and HAVE_PIL:
+                path = _hidden_parts_cut(path, b, warn)
             try:
                 pic = slide.shapes.add_picture(path, left, top, width, height)
             except Exception as exc:                   # noqa: BLE001
-                warn(f"could not place image {os.path.basename(path)}: {exc}")
+                warn(f"could not place image {os.path.basename(b.src or '')}: {exc}")
                 continue
             if b.geom in SHAPE_GEOMS and b.geom != "rect":
                 # cropped to a shape, as in Publisher
@@ -4380,6 +4556,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         conv.inline_boxes = restore_vml_inline_text_boxes(soup)
         restore_vml_pictures(soup)
         conv.vml_order = vml_shape_order(soup)
+        conv.vml_shapes = vml_group_shapes(soup)
         sheet = StyleSheet()
         for st in soup.find_all("style"):
             sheet.add_css(st.get_text())
