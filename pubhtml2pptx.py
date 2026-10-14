@@ -1395,6 +1395,27 @@ def _pub_jump_tail(para) -> Optional["Para"]:
     j = next((k + 1 for k, g in enumerate(gaps) if k and g > 2 * pitch and g - pitch > 6.0), None)
     if pitch <= 0 or j is None:
         return None
+    return _pub_split_lines(para, j, tops[j - 1] + pitch)
+
+
+def _pub_first_line(para) -> Optional["Para"]:
+    """Splits a paragraph on Publisher's lines after its first line, as
+    _pub_jump_tail does at a jump, and returns the rest; None, changing
+    nothing, for one line, or a bulleted paragraph."""
+    rec = para.pub or {}
+    tops, starts = rec.get("lineTops") or [], rec.get("lineStarts") or []
+    if (not para.keep_lines or para.bullet or len(tops) < 2 or len(starts) != len(tops)
+            or para.text().count("\v") != len(tops) - 1 or rec.get("top") is None):
+        return None
+    return _pub_split_lines(para, 1, tops[1])
+
+
+def _pub_split_lines(para, j: int, head_foot: float) -> "Para":
+    """_pub_jump_tail's split, before line j; head_foot is where the
+    first part's last line ends."""
+    rec = para.pub
+    tops, starts = rec["lineTops"], rec["lineStarts"]
+    text = para.text()
     k = -1
     for _ in range(j):
         k = text.index("\v", k + 1)
@@ -1420,7 +1441,7 @@ def _pub_jump_tail(para) -> Optional["Para"]:
         return out
 
     para.pub = dict(rec, text=pub_text[:cut], spaceAfter=0.0, lineStarts=starts[:j],
-                    lineTops=tops[:j], height=tops[j - 1] + pitch - float(rec["top"]),
+                    lineTops=tops[:j], height=head_foot - float(rec["top"]),
                     **part(0, j))
     tail.pub = dict(rec, text=pub_text[cut:], spaceBefore=0.0, firstIndent=0.0,
                     lineStarts=[s - starts[j] for s in starts[j:]], lineTops=tops[j:],
@@ -2396,6 +2417,24 @@ class Converter:
         # each later one through the space after the paragraph before it
         for i in range(1, len(settings)):
             settings[i - 1][1] -= settings[i][2] - settings[i - 1][2]
+        # a lift more than the space after the paragraph above, as under a
+        # heading with none, comes out of the paragraph's first line instead,
+        # on a line of its own: PowerPoint puts the extra in a line's spacing
+        # above it, so a shorter one raises the lines after it by as much
+        # and its own text by most of it
+        for i in reversed(range(1, len(settings))):
+            short = min(-settings[i - 1][1], 0.5 * settings[i][0])
+            if short <= 0.1 or paras[i].line_multiple or len(_line_sizes(paras[i])) != 1 \
+                    or None in _line_sizes(paras[i]):
+                continue
+            tail = _pub_first_line(paras[i])
+            if tail is None:
+                continue
+            line, after, lift = settings[i]
+            settings[i - 1][1] = 0.0
+            settings[i] = [line - short, 0.0, lift]
+            paras.insert(i + 1, tail)
+            settings.insert(i + 1, [line, after, lift])
         for p, (line, after, _) in zip(paras, settings):
             p.exact_line_pt = line
             p.space_after_pt = max(after, 0.0)
