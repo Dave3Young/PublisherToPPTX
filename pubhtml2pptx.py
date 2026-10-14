@@ -1574,7 +1574,7 @@ def pct_lift(line: float, size: float, multiple: float, font: Optional[str],
         # place: a font with a line gap. Publisher's line a little off the
         # font's single spacing keeps its baseline, but PowerPoint's moves,
         # and jumps up just past 100%
-        gap = (m["typo"] if m["version"] >= 2 else m["hhea"])[2] if m else 0.0
+        gap = _pub_line_table(m)[2] if m else 0.0
         if single and first is not None and gap > 0:
             ppt = ppt_first_baseline((ratio if abs(ratio / single - 1.0) <= 0.03 else single) / 1.2)
             if single < 1.2:
@@ -1678,17 +1678,25 @@ def _font_metrics(family: Optional[str], bold: bool = False,
     return found
 
 
+def _pub_line_table(m: dict) -> tuple:
+    """The ascender, descender and line gap Publisher spaces a font's lines
+    by: its OS/2 table's typo ones, or for a font whose OS/2 table is older
+    than version 2, or whose typo line is shorter than the font size
+    (Courier New), its hhea table's."""
+    asc, desc, gap = m["typo"]
+    return m["typo"] if m["version"] >= 2 and asc - desc + gap >= 1.0 else m["hhea"]
+
+
 def pub_single_spacing(family: Optional[str], bold: bool = False,
                        italic: bool = False) -> Optional[float]:
     """Publisher's single line spacing for a font, as a multiple of its size:
-    the line height its OS/2 table gives (ascender, descender and line gap),
-    or for a font whose OS/2 table is older than version 2, its hhea table.
+    the line height _pub_line_table gives (ascender, descender and line gap).
     PowerPoint's single spacing is 1.2 times the size for every font. None
     if the font file can't be read."""
     m = _font_metrics(family, bold, italic)
     if not m:
         return None
-    asc, desc, gap = m["typo"] if m["version"] >= 2 else m["hhea"]
+    asc, desc, gap = _pub_line_table(m)
     ratio = (asc - desc + gap) or None
     # an East Asian font (its code pages include Japanese, Chinese or
     # Korean) gets Office's taller lines
@@ -1709,7 +1717,7 @@ def pub_first_baseline(family: Optional[str], bold: bool = False,
     m = _font_metrics(family, bold, italic)
     if not m or m["pages"] & (0b11111 << 17):
         return None
-    asc, _, gap = m["typo"] if m["version"] >= 2 else m["hhea"]
+    asc, _, gap = _pub_line_table(m)
     return asc + max(gap, 0.0)
 
 
