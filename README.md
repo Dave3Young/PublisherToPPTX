@@ -209,27 +209,20 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   bottom or middle starts at the top instead.
 
 ## Samples
-`samples\` holds nine test publications, one folder each. Every folder holds the source
+`samples\` holds four test publications, one folder each. Every folder holds the source
 `.pub` and, where stage 1 has been run, its HTML export. Converted `.pptx` output is not kept.
 
 | Sample | Contents |
 | --- | --- |
 | `bizcard` | `.pub`, plus the stage 1 HTML and `bizcard_files\` in `bizcard\`, and an older export beside the `.pub` |
-| `Publication3` | `.pub`, plus the stage 1 HTML in `Publication3\` (it has no pictures), and an older export beside the `.pub` |
-| `Publication4` | `.pub`, plus the stage 1 HTML in `Publication4\` (a blank page) |
-| `petlexia publication`, `petlexia publication2`, `petlexia publication3` | `.pub`, plus the stage 1 HTML and `_files\` in a subfolder of the same name |
 | `sidebyside-row` | `.pub`, PDF and stage 1 export: three pictures in a row |
 | `sidebyside-grid` | `.pub`, PDF and stage 1 export: a 2x2 grid of pictures |
 | `sidebyside-imagetext` | `.pub`, PDF and stage 1 export: pictures beside text boxes |
 
-The second and third petlexia files are named with a space before `.pub`. Stage 1 trims
-that space, so their exports are named `petlexia publication2` and `petlexia publication3`.
-
 Each export is in stage 1's own layout, a subfolder named after the publication, with its
-`_pagesize.txt` and `_text.json`. `bizcard` and `Publication3` also keep an older export next
-to the `.pub`, made before stage 1 recorded page sizes and text layout. It shows how stage 2
-converts an export without those files. Converting `samples` with `-Recurse` converts both
-copies.
+`_pagesize.txt` and `_text.json`. `bizcard` also keeps an older export next to the `.pub`,
+made before stage 1 recorded page sizes and text layout. It shows how stage 2 converts an
+export without those files. Converting `samples` with `-Recurse` converts both copies.
 
 `make_sidebyside.ps1` builds the three `sidebyside` samples in Publisher, including a PDF
 showing how each should look. Its test pictures are lettered squares in `sidebyside-images\`,

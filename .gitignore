@@ -7,3 +7,10 @@ __pycache__/
 
 # Proprietary sample publications: never commit
 proprietary_samples/
+
+# Sample publications kept locally only: never commit
+samples/Publication3/
+samples/Publication4/
+samples/petlexia publication/
+samples/petlexia publication2/
+samples/petlexia publication3/
