@@ -24,17 +24,45 @@ record the page size or the text layout files that stage 2 needs to match Publis
   skipped. `pubhtml2pptx.py` must stay in the same folder as `PublisherHtmlToPptx.ps1`.
 
 ## Usage
+Both stages are usually run on a whole tree of folders at once with `-Recurse`. Leave
+`-Recurse` off and name one file or folder to convert only that, so that other files in the
+same parent folder are left alone.
+
 ```powershell
-# Stage 1: run in the folder holding the .pub files.
-# Each MyFlyer.pub gets a MyFlyer\ export folder beside it.
-.\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub"
+# Stage 1 gives each MyFlyer.pub a MyFlyer\ export folder beside it.
+
+# Every .pub file in the current folder and all of its subfolders
 .\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub" -Recurse
 
-# Stage 2, one export folder: writes MyFlyer\MyFlyer.pptx
+# Every .pub file in the current folder only, not its subfolders
+.\PublisherPubToHtmlForPptx.ps1 -Filter "*.pub"
+
+# One .pub file only, leaving the other .pub files in the folder alone
+.\PublisherPubToHtmlForPptx.ps1 -Filter "MyFlyer.pub"
+
+# One file, or one folder's .pub files, somewhere else
+.\PublisherPubToHtmlForPptx.ps1 -Filter "C:\Pubs\Spring\MyFlyer.pub"
+.\PublisherPubToHtmlForPptx.ps1 -Filter "C:\Pubs\Spring\*.pub"
+```
+
+With `-Recurse`, a file name such as `"MyFlyer.pub"` matches every file of that name in the
+subfolders too, so leave `-Recurse` off when converting one file.
+
+```powershell
+# Stage 2 writes each export folder's .pptx inside it: MyFlyer\MyFlyer.pptx
+
+# Every export folder in the current folder and all of its subfolders
+.\PublisherHtmlToPptx.ps1 -Path . -Recurse
+
+# Every export folder in a tree elsewhere, with the 300 dpi pictures and a report
+.\PublisherHtmlToPptx.ps1 -Path C:\Pubs -Recurse -HiRes -Report
+
+# One export folder only, leaving the other export folders alone
 .\PublisherHtmlToPptx.ps1 -Path .\MyFlyer
 
-# Stage 2, every export folder in a tree, with the 300 dpi pictures and a report
-.\PublisherHtmlToPptx.ps1 -Path C:\Pubs -Recurse -HiRes -Report
+# One export folder somewhere else, named by its folder or its .htm file
+.\PublisherHtmlToPptx.ps1 -Path C:\Pubs\Spring\MyFlyer -HiRes
+.\PublisherHtmlToPptx.ps1 -Path C:\Pubs\Spring\MyFlyer\MyFlyer.htm
 ```
 
 In Canva, choose **Create a design > Import file**, or drag the `.pptx` onto the Projects page.
@@ -42,8 +70,8 @@ In Canva, choose **Create a design > Import file**, or drag the `.pptx` onto the
 ### Stage 1 parameters
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `-Filter` | (required) | The `.pub` files to convert, such as `"*.pub"` or `"MyFlyer.pub"`. |
-| `-Recurse` | | Also convert `.pub` files in subfolders. |
+| `-Filter` | (required) | The `.pub` files to convert, such as `"*.pub"`, `"MyFlyer.pub"` or `"C:\Pubs\Spring\*.pub"`. |
+| `-Recurse` | | Also convert matching `.pub` files in subfolders. Leave it off to convert only the files `-Filter` names. |
 | `-RefreshTextLayout` | | Rewrite `<name>_text.json` even if it exists. |
 
 These settings are at the top of the script:
@@ -59,7 +87,7 @@ These settings are at the top of the script:
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `-Path` | (required) | An export folder, an `.htm` file, or a tree of export folders with `-Recurse`. |
-| `-Recurse` | | Convert every export folder below `-Path`. Any folder holding an `.htm` file counts. |
+| `-Recurse` | | Convert every export folder below `-Path`. Any folder holding an `.htm` file counts. Leave it off to convert only the one folder or file `-Path` names. |
 | `-HiRes` | | Replace Publisher's web-quality images with stage 1's 300 dpi PNGs, keeping the HTML layout. |
 | `-NoExtras` | | Leave out the extra slides that carry scratch-area pictures and text. |
 | `-Reflow` | | Let text wrap freely in PowerPoint instead of breaking each line where Publisher does. Easier to edit, but lines can break differently from Publisher. |
