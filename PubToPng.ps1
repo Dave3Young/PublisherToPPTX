@@ -1,5 +1,5 @@
 <#
-Disclaimer: This script is provided for educational and informational purposes only and is offered "as is"
+Disclaimer: This script is provided "as is"
     with no warranty or guarantee of any kind. By using this script, you accept full responsibility for any
     consequences, including but not limited to data loss, system instability, or unintended results.
     Use at your own risk.
