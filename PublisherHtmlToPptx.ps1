@@ -14,7 +14,7 @@ Disclaimer: This script is provided "as is"
     arriving as separate editable elements instead of one flattened page image.
 
     Requires Python 3.9+ on PATH. The first run installs the Python packages it needs.
-    Works in Windows PowerShell 5.1 and PowerShell 7.
+    Works in Windows PowerShell 5.1 or PowerShell 7.
 
     To run:
 

@@ -36,7 +36,7 @@ and every file inside comes out unblocked. If there is no **Unblock** checkbox, 
 blocked.
 
 ## Requirements
-- Windows 10/11 with Windows PowerShell 5.1. Stage 2 also runs in PowerShell 7.
+- Windows 10/11 with Windows PowerShell 5.1, which comes with Windows.
 - Stage 1: Microsoft Publisher installed, because the script drives it through COM.
 - Stage 2: Python 3.9 or later on PATH. The first run installs `python-pptx`,
   `beautifulsoup4`, `lxml` and `Pillow`. The Microsoft Store `python` alias is detected and

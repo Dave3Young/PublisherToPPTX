@@ -16,7 +16,7 @@ Disclaimer: This script is provided "as is"
     Stand-alone: it needs only Publisher, not the rest of this repository. It is handy for
     checking a converted .pptx against the original publication page by page.
 
-    Requires Microsoft Publisher installed. Works in Windows PowerShell 5.1 and PowerShell 7.
+    Requires Microsoft Publisher installed. Works in Windows PowerShell 5.1 or PowerShell 7.
 
     To run:
 
