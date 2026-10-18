@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Downloaded this script? Unblock it first to avoid Windows security errors: right-click it, Properties, tick Unblock, OK. Or run: Unblock-File .\pubhtml2pptx.py in PowerShell
 """
 pubhtml2pptx.py
 ===============

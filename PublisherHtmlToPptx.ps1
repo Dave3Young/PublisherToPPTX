@@ -1,3 +1,4 @@
+# Downloaded this script? Unblock it first to avoid Windows security errors: right-click it, Properties, tick Unblock, OK. Or run: Unblock-File .\PublisherHtmlToPptx.ps1
 <#
 Disclaimer: This script is provided "as is"
     with no warranty or guarantee of any kind. By using this script, you accept full responsibility for any

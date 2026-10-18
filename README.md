@@ -16,6 +16,25 @@ Use this repository's stage 1 script, not `PublisherPubToHTMLPNGfilesFinal.ps1` 
 [Publisher_Exports](https://github.com/Dave3Young/Publisher_Exports). That script does not
 record the page size or the text layout files that stage 2 needs to match Publisher's layout.
 
+## Unblock the scripts after downloading
+Windows marks files downloaded from the internet as blocked, and PowerShell may then refuse to
+run them with an error such as "is not digitally signed" or "cannot be loaded". Before running
+a script for the first time, unblock it:
+1. In File Explorer, right-click the script and choose **Properties**.
+2. On the **General** tab, tick **Unblock**, then click **Apply** and **OK**.
+
+![The Unblock checkbox on the General tab of a file's Properties](images/unblock.png)
+
+Or unblock every script in the folder at once from PowerShell:
+
+```powershell
+Get-ChildItem *.ps1, *.py | Unblock-File
+```
+
+If you downloaded the repository as a ZIP, unblock the ZIP the same way before extracting it,
+and every file inside comes out unblocked. If there is no **Unblock** checkbox, the file is not
+blocked.
+
 ## Requirements
 - Windows 10/11 with Windows PowerShell 5.1. Stage 2 also runs in PowerShell 7.
 - Stage 1: Microsoft Publisher installed, because the script drives it through COM.
