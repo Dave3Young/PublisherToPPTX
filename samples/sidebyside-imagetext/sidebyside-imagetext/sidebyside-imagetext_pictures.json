@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "units": "pt",
+  "pictures": [
+    {
+      "file": "sidebyside-imagetext_page_001_image_001.png",
+      "page": 1,
+      "left": 72.0,
+      "top": 72.0,
+      "width": 200.0,
+      "height": 200.0,
+      "rotation": 0.0
+    },
+    {
+      "file": "sidebyside-imagetext_page_001_image_002.png",
+      "page": 1,
+      "left": 340.0,
+      "top": 300.0,
+      "width": 200.0,
+      "height": 200.0,
+      "rotation": 0.0
+    }
+  ]
+}

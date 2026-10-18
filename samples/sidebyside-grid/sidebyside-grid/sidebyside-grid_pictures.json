@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "units": "pt",
+  "pictures": [
+    {
+      "file": "sidebyside-grid_page_001_image_001.png",
+      "page": 1,
+      "left": 126.0,
+      "top": 130.0,
+      "width": 170.0,
+      "height": 170.0,
+      "rotation": 0.0
+    },
+    {
+      "file": "sidebyside-grid_page_001_image_002.png",
+      "page": 1,
+      "left": 316.0,
+      "top": 130.0,
+      "width": 170.0,
+      "height": 170.0,
+      "rotation": 0.0
+    },
+    {
+      "file": "sidebyside-grid_page_001_image_003.png",
+      "page": 1,
+      "left": 126.0,
+      "top": 320.0,
+      "width": 170.0,
+      "height": 170.0,
+      "rotation": 0.0
+    },
+    {
+      "file": "sidebyside-grid_page_001_image_004.png",
+      "page": 1,
+      "left": 316.0,
+      "top": 320.0,
+      "width": 170.0,
+      "height": 170.0,
+      "rotation": 0.0
+    }
+  ]
+}

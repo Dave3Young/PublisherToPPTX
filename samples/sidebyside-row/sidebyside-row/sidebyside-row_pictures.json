@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "units": "pt",
+  "pictures": [
+    {
+      "file": "sidebyside-row_page_001_image_001.png",
+      "page": 1,
+      "left": 72.0,
+      "top": 130.0,
+      "width": 144.0,
+      "height": 144.0,
+      "rotation": 0.0
+    },
+    {
+      "file": "sidebyside-row_page_001_image_002.png",
+      "page": 1,
+      "left": 234.0,
+      "top": 130.0,
+      "width": 144.0,
+      "height": 144.0,
+      "rotation": 0.0
+    },
+    {
+      "file": "sidebyside-row_page_001_image_003.png",
+      "page": 1,
+      "left": 396.0,
+      "top": 130.0,
+      "width": 144.0,
+      "height": 144.0,
+      "rotation": 0.0
+    }
+  ]
+}
