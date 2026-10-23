@@ -38,7 +38,9 @@ Options
 -------
     -o, --output PATH   output .pptx (single input) or output folder (--recurse)
     --recurse           find every *_export folder beneath the input folder
-    --dpi N             CSS pixels per inch, default 96
+    --dpi N             CSS pixels per inch. Default: found by matching the
+                        export to stage 1's measurements (a newer Publisher on a
+                        scaled display writes about 120), else 96
     --hires             swap web images for the matching 300dpi COM PNG
     --no-extras         do not append slides for scratch-area PNGs/text
     --reflow            let text wrap freely instead of breaking lines where
@@ -1882,7 +1884,11 @@ def has_coords(style: dict) -> bool:
 
 class Converter:
     def __init__(self, args, warn):
-        self.dpi = float(args.dpi)
+        self.dpi = float(args.dpi or 96.0)
+        # how much larger than an <img>'s width and height its place is drawn
+        self.img_attr_k = 1.0
+        # pixels the export grew each box by (see detect_html_dpi)
+        self.html_grow = 0.0
         self.args = args
         self.warn = warn
         # break lines where Publisher does, unless asked to let text reflow
@@ -2529,10 +2535,15 @@ class Converter:
         w = to_px(style.get("width"), self.dpi, cb_w)
         h = to_px(style.get("height"), self.dpi, cb_h)
 
+        # an <img>'s width and height stay at 96 per inch when the export's
+        # positions are at a display-scaled size, and grown as its boxes are
+        k, grow = (self.img_attr_k, self.html_grow) if el.name.lower() == "img" else (1.0, 0.0)
         if w is None and el.get("width"):
             w = to_px(el["width"], self.dpi, cb_w)
+            w = max(w * k - grow, 1.0) if w is not None else None
         if h is None and el.get("height"):
             h = to_px(el["height"], self.dpi, cb_h)
+            h = max(h * k - grow, 1.0) if h is not None else None
 
         right = to_px(style.get("right"), self.dpi, cb_w)
         bottom = to_px(style.get("bottom"), self.dpi, cb_h)
@@ -4136,6 +4147,167 @@ def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
     return top
 
 
+def load_pub_rects(export_dir: str, base: str, pictures: Optional[list]) -> list:
+    """Every frame and picture stage 1 measured: (page, left, top, width,
+    height) in pt, page 0 for a master page."""
+    rects = [(p["page"], p["left"], p["top"], p["width"], p["height"])
+             for p in pictures or []]
+    path = os.path.join(export_dir, base + "_text.json")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return rects
+    for shape in data.get("shapes", []) if isinstance(data, dict) else []:
+        try:
+            rects.append((int(shape.get("page", 0)), float(shape["left"]), float(shape["top"]),
+                          float(shape["width"]), float(shape["height"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return rects
+
+
+def _html_px_rects(page_el: Tag, sheet: StyleSheet) -> list:
+    """The positioned shapes inside a page wrapper that the export placed in
+    pixels: (left, top, width, height) from the wrapper's corner. Shapes in
+    other units come out right at any pixel size, so they are left out."""
+    def px(value):
+        m = _LEN_RE.match(str(value)) if value is not None else None
+        return float(m.group(1)) if m and (m.group(2) or "px").lower() == "px" else None
+
+    rects = []
+
+    def visit(el, ox, oy):
+        for child in el.children:
+            if not isinstance(child, Tag):
+                continue
+            st = computed_style(child, sheet, {})
+            cx, cy = ox, oy
+            if is_positioned(st):
+                left, top = px(st.get("left")), px(st.get("top"))
+                w, h = px(st.get("width")), px(st.get("height"))
+                if left is not None and top is not None:
+                    cx, cy = ox + left, oy + top
+                    if w and h and w > 0 and h > 0:
+                        rects.append((cx, cy, w, h))
+            visit(child, cx, cy)
+
+    visit(page_el, 0.0, 0.0)
+    return rects
+
+
+def detect_html_dpi(pages: list, sheet: StyleSheet, pub_rects: list,
+                    default: float = 96.0) -> tuple:
+    """The pixels per inch the export's positions are in, and how many pixels
+    wider and taller than Publisher's own it draws every box. Publisher 2010
+    writes positions at 96 per inch, but a newer Publisher on a display
+    scaled past 100% writes them at its scaled size (about 120 per inch at
+    125%), while sizes in pt stay true, and grows each box by a few pixels
+    about its centre. Stage 1 measured the frames and pictures in pt, so
+    find the size that puts the export's shapes where it saw them; the
+    default (with no growth) stays unless another size clearly matches more
+    of them."""
+    pairs = []      # (html centre px, stage 1 centre pt, stage 1 size pt)
+    for no, (el, _, _, _) in enumerate(pages, start=1):
+        html = [(x + w / 2, y + h / 2, w, h) for x, y, w, h in _html_px_rects(el, sheet)]
+        pub = [(l + w / 2, t + h / 2, w, h) for pg, l, t, w, h in pub_rects
+               if pg in (0, no) and w > 0 and h > 0]
+        pairs.extend((hr, pr) for hr in html for pr in pub)
+    if not pairs:
+        return default, 0.0
+
+    def matches(dpi):
+        k = dpi / 72.0
+        found = {}
+        for (hx, hy, hw, hh), (px_, py, pw, ph) in pairs:
+            off = math.hypot(hx - px_ * k, hy - py * k)
+            if off > max(3.0, 0.03 * max(pw, ph) * k):
+                continue
+            # a border drawn outside the frame makes the export's box larger
+            if not (0.75 < hw / (pw * k) < 1.35 and 0.75 < hh / (ph * k) < 1.35):
+                continue
+            key = (px_, py, pw, ph)
+            if key not in found or off < found[key][0]:
+                found[key] = (off, hx, hy, px_, py, hw - pw * k, hh - ph * k)
+        return list(found.values())
+
+    # each pairing far from the corner suggests a size; try the commonest
+    votes: dict = {}
+    for (hx, hy, hw, hh), (px_, py, pw, ph) in pairs:
+        r = math.hypot(px_, py)
+        if r > 36.0:
+            dpi = 72.0 * math.hypot(hx, hy) / r
+            if 72.0 <= dpi <= 300.0:
+                votes[round(dpi)] = votes.get(round(dpi), 0) + 1
+    base = len(matches(default))
+    best, best_n = default, base
+    for dpi in sorted(votes, key=votes.get, reverse=True)[:8]:
+        # a display is scaled in steps (125%, 150% ...): a size just off the
+        # default is the tolerance catching a few shapes by chance
+        if abs(dpi / default - 1.0) < 0.08:
+            continue
+        n = len(matches(float(dpi)))
+        if n > best_n:
+            best, best_n = float(dpi), n
+    if best == default or best_n < max(3, 2 * base, base + 2):
+        return default, 0.0
+    # refine by least squares over the matched centres
+    found = matches(best)
+    num = sum(f[1] * f[3] + f[2] * f[4] for f in found)
+    den = sum(f[3] * f[3] + f[4] * f[4] for f in found)
+    refined = 72.0 * num / den if den else best
+    if len(matches(refined)) >= best_n:
+        best, found = refined, matches(refined)
+    # a border drawn outside a frame grows its box more; a box with none
+    # (a picture, most often) shows the growth alone
+    grow = min(min(f[5], f[6]) for f in found)
+    return best, (round(grow, 1) if grow >= 1.0 else 0.0)
+
+
+def shrink_px_boxes(page_el: Tag, sheet: StyleSheet, grow: float) -> None:
+    """Takes the growth detect_html_dpi found off every box the export sized
+    in pixels, keeping its centre. A box's place is from its positioned
+    parent's corner, which moves in by as much, so only the outermost
+    boxes move."""
+    if grow <= 0:
+        return
+    pat = re.compile(r"(?<![-\w])(left|top|width|height)(\s*:\s*)(-?[\d.]+)px", re.I)
+
+    def visit(el, outer):
+        for child in el.children:
+            if not isinstance(child, Tag):
+                continue
+            st = computed_style(child, sheet, {})
+            style = child.get("style")
+            sized = bool(is_positioned(st) and style and
+                         str(st.get("width", "")).lower().endswith("px") and
+                         str(st.get("height", "")).lower().endswith("px"))
+            if sized:
+                def fix(m):
+                    prop, v = m.group(1).lower(), float(m.group(3))
+                    if prop in ("width", "height"):
+                        v = max(v - grow, 1.0)
+                    elif outer:
+                        v += grow / 2
+                    else:
+                        return m.group(0)
+                    return f"{m.group(1)}{m.group(2)}{v:g}px"
+                child["style"] = pat.sub(fix, str(style))
+                # the frame's layout table is sized in pixels as the box is
+                old = {"width": to_px(st.get("width"), 96.0), "height": to_px(st.get("height"), 96.0)}
+                for cell in child.find_all(["table", "tr", "td", "th"]):
+                    for attr, size in old.items():
+                        try:
+                            v = float(str(cell.get(attr)))
+                        except ValueError:
+                            continue
+                        if size and abs(v - size) <= 1.0:
+                            cell[attr] = f"{max(v - grow, 1.0):g}"
+            visit(child, outer and not sized)
+
+    visit(page_el, True)
+
+
 def read_page_size(export_dir: str, base: str) -> Optional[tuple]:
     """The real page size in inches, recorded by stage 1 as <base>_pagesize.txt."""
     path = os.path.join(export_dir, base + "_pagesize.txt")
@@ -4713,7 +4885,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     # Publisher sizes its page wrapper to the content, not the page, and
     # sometimes writes a malformed height, so prefer stage 1's real size.
     real_page = read_page_size(export_dir, base)
-    dpi = float(args.dpi)
+    dpi = float(args.dpi or 96.0)
     resolver = ImageResolver(export_dir, export_dir, warn)
     conv = Converter(args, warn)
     conv.pub_text = load_pub_text(export_dir, base)
@@ -4755,6 +4927,22 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         pages = find_page_containers(soup, sheet, dpi,
                                      (real_page or fallback)[1] * dpi,
                                      (real_page or fallback)[0] * dpi)
+        if not args.dpi and not slide_pages and pages:
+            # the first page's export says what its pixels are; the rest match
+            found, grow = detect_html_dpi(pages, sheet,
+                                          load_pub_rects(export_dir, base, pub_pictures))
+            if found != dpi:
+                warn(f"the export's positions are at {found:.1f} pixels per inch, not "
+                     f"{dpi:.0f} (a display scaled to {found / 96.0:.0%}); read them at that")
+                dpi = conv.dpi = found
+                conv.img_attr_k = found / 96.0
+                conv.html_grow = grow
+                pages = find_page_containers(soup, sheet, dpi,
+                                             (real_page or fallback)[1] * dpi,
+                                             (real_page or fallback)[0] * dpi)
+        if conv.html_grow:
+            for el, _, _, _ in pages:
+                shrink_px_boxes(el, sheet, conv.html_grow)
 
         resolver.html_dir = os.path.dirname(html_path)
 
@@ -5047,7 +5235,8 @@ def main(argv=None) -> int:
     ap.add_argument("input", help="export folder, a .htm file, or a tree with --recurse")
     ap.add_argument("-o", "--output", help="output .pptx, or output folder with --recurse")
     ap.add_argument("--recurse", action="store_true", help="process every export folder below input")
-    ap.add_argument("--dpi", type=float, default=96.0, help="CSS pixels per inch (default 96)")
+    ap.add_argument("--dpi", type=float, default=None,
+                    help="CSS pixels per inch (default: found from stage 1's measurements, else 96)")
     ap.add_argument("--hires", action="store_true", help="use the 300dpi COM-exported PNGs")
     ap.add_argument("--no-extras", action="store_true", help="skip scratch-area slides")
     ap.add_argument("--reflow", action="store_true",

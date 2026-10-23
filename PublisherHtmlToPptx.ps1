@@ -61,7 +61,9 @@ param
     [string]
     $OutputFolder,
 
-    # CSS pixels per inch. Leave at 96 unless pages come out the wrong size.
+    # CSS pixels per inch. Leave it out: the converter works it out from stage 1's
+    # measurements (a newer Publisher on a display scaled past 100% writes more than
+    # 96), else uses 96. Set it only if pages come out the wrong size.
     [double]
     $Dpi = 96,
 

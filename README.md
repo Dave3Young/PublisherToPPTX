@@ -112,7 +112,7 @@ These settings are at the top of the script:
 | `-Reflow` | | Let text wrap freely in PowerPoint instead of breaking each line where Publisher does. Easier to edit, but lines can break differently from Publisher. |
 | `-Report` | | Write `<name>_conversion_report.txt` beside each `.pptx`. |
 | `-OutputFolder` | the export folder | Where the `.pptx` files are written. |
-| `-Dpi` | 96 | CSS pixels per inch. Change it only if pages come out the wrong size. |
+| `-Dpi` | found from the export | CSS pixels per inch. Leave it out: it is worked out from stage 1's measurements, else 96 (see "Publisher versions and display scaling" below). Set it only if pages come out the wrong size. |
 | `-SkipInstall` | | Skip the Python package check, which makes repeat runs faster. |
 | `-Verbose` | | Log every shape as it is placed. |
 
@@ -202,6 +202,11 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
   can't wrap text around a picture, and doesn't hyphenate. Where Publisher does either,
   lines break differently, and the paragraphs that follow in the same text box can sit
   higher or lower than in Publisher.
+- **Publisher versions and display scaling:** Publisher 2010 writes the HTML's positions at
+  96 pixels per inch. Publisher for Microsoft 365, on a display scaled to 125%, writes them
+  at 120 and draws every box a few pixels larger. Sizes in points are unaffected. Stage 2
+  matches the HTML's shapes to stage 1's measurements to find the scale and the extra size,
+  and corrects both. The report notes when it does. Without `_text.json` and `_pictures.json` it can't tell, and assumes 96.
 - **Image types:** images in other formats (such as Publisher's `.wmz` files) are skipped,
   with a warning.
 - **`-HiRes` matching:** with `_pictures.json`, a 300 dpi PNG replaces the web image in the
