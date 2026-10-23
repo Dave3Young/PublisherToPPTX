@@ -2634,6 +2634,12 @@ class Converter:
                     boxes.append(Box(kind="rect", x=cx, y=cy, w=cw, h=row_h[ri],
                                      fill=fill, order=self.order, note="table cell fill"))
                 self._cell_borders(cs, cx, cy, cw, row_h[ri], table_box, edges)
+                # the content sits inside an outline Publisher drew inside the
+                # shape, which the export's cell is half that outline bigger than
+                pen = to_px(cs.get("x-pen-inset"), self.dpi) or 0.0
+                if not (pen and cw > 4 * pen and row_h[ri] > 4 * pen):
+                    pen = 0.0
+                ix, iy, iw, ih = cx + pen, cy + pen, cw - 2 * pen, row_h[ri] - 2 * pen
                 # HTML centres cell content vertically unless told otherwise,
                 # and Publisher's export relies on that
                 valign = str(cs.get("vertical-align") or cell.get("valign")
@@ -2645,11 +2651,11 @@ class Converter:
                     cell_style = {k: v for k, v in cs.items()
                                   if not k.startswith(("background", "border"))}
                     placed: list = []
-                    used = self._emit_node(cell, sheet, cell_style, (cx, cy), cw, row_h[ri],
+                    used = self._emit_node(cell, sheet, cell_style, (ix, iy), iw, ih,
                                            placed, stop_nodes)
                     pad_b = to_px(cs.get("padding-bottom"), self.dpi) or 0.0
                     # like Publisher, centre without the last paragraph's space after
-                    free = max(row_h[ri] - (used - self.trailing) - pad_b, 0.0)
+                    free = max(ih - (used - self.trailing) - pad_b, 0.0)
                     dy = {"top": 0.0, "middle": free / 2, "bottom": free}[valign]
                     for b in placed:
                         if not b.fixed:
@@ -2659,11 +2665,11 @@ class Converter:
                     # One that leads the frame, where stage 1 saw it laid out,
                     # Publisher draws running past the frame's edge; further
                     # down it draws them jumbled over the frame's other lines
-                    bottom = cy + row_h[ri]
+                    bottom = iy + ih
                     first = min((b.y for b in placed), default=0.0)
                     kept = [b for b in placed
                             if b.y < bottom - 1.0
-                            and not (b.kind == "image" and b.w > cw + 2.0
+                            and not (b.kind == "image" and b.w > iw + 2.0
                                      and not (b.fixed and b.y <= first + 1.0))]
                     if len(kept) < len(placed):
                         self.warn(f"dropped {len(placed) - len(kept)} shape(s) in a text box's "
@@ -2674,27 +2680,27 @@ class Converter:
                     # plus that of the text box's <div class=shape> inside it
                     pl, pt_, pr, pb = (
                         (pad if v is None else v) + inner for v, inner in zip(
-                            (to_px(cs.get("padding-" + side), self.dpi, cw)
+                            (to_px(cs.get("padding-" + side), self.dpi, iw)
                              for side in ("left", "top", "right", "bottom")),
-                            self._wrapper_padding(cell, sheet, cs, cw)))
+                            self._wrapper_padding(cell, sheet, cs, iw)))
                     # (each frame of a linked story records all its text, so
                     # a record's own frame may be another one's)
                     paras = self.collect_paras(cell, sheet, cs, stop_nodes,
                                                region=(cx, cy, cx + cw, cy + row_h[ri]),
-                                               text_area=(cx + pl, cx + max(cw - pr, pl + 8.0)))
-                    where = self._pub_place(paras, bottom=cy + row_h[ri])
+                                               text_area=(ix + pl, ix + max(iw - pr, pl + 8.0)))
+                    where = self._pub_place(paras, bottom=iy + ih)
                     self.order += 1
                     if where:
                         top, _ = where
-                        boxes.append(Box(kind="text", x=cx + pl, y=top,
-                                         w=max(cw - pl - pr, 8.0),
-                                         h=max(cy + row_h[ri] - top, 8.0),
+                        boxes.append(Box(kind="text", x=ix + pl, y=top,
+                                         w=max(iw - pl - pr, 8.0),
+                                         h=max(iy + ih - top, 8.0),
                                          paras=paras, order=self.order, note="table cell",
                                          fixed=True))
                     else:
-                        boxes.append(Box(kind="text", x=cx + pl, y=cy + pt_,
-                                         w=max(cw - pl - pr, 8.0),
-                                         h=max(row_h[ri] - pt_ - pb, 8.0),
+                        boxes.append(Box(kind="text", x=ix + pl, y=iy + pt_,
+                                         w=max(iw - pl - pr, 8.0),
+                                         h=max(ih - pt_ - pb, 8.0),
                                          paras=paras, order=self.order, note="table cell",
                                          anchor=valign))
             cy += row_h[ri]
