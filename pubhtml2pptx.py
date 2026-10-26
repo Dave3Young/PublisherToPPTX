@@ -2377,6 +2377,33 @@ class Converter:
             if tail is not None:
                 paras.insert(i + 1, tail)
 
+        def multiple_fit(p, tops):
+            """The multiple PowerPoint can space the paragraph's lines by when
+            they are of different sizes, each as tall as its largest text, as
+            Publisher spaces them; None when one exact spacing has to do."""
+            rec = p.pub
+            multiple = pub_line_multiple(rec) if rec.get("lineRule") in (0, 1, 2, 5) else None
+            line_sizes = _line_size_list(p) if p.keep_lines and multiple else []
+            if not (len(tops) >= 2 and len(line_sizes) == len(tops) and None not in line_sizes
+                    and len(set(line_sizes)) > 1):
+                return None
+            pitches = [(b - a, 1.2 * s) for a, b, s in zip(tops, tops[1:], line_sizes)]
+            fit = sum(g for g, _ in pitches) / sum(s for _, s in pitches)
+            # no gap measures the last line, so its size must be one the
+            # others show, or the gaps must give the paragraph's own
+            # multiple for its font over a last line much smaller, as
+            # under a line made tall by one large character: one exact
+            # spacing would put that last line several points low
+            sized = [r for r in p.runs if r.text.strip() and r.size_pt and not r.script]
+            big = max(sized, key=lambda r: r.size_pt) if sized else None
+            ratio = pub_single_spacing(big.font, big.bold, big.italic) if big else None
+            own = (bool(ratio) and max(line_sizes[:-1]) >= 1.5 * line_sizes[-1]
+                   and abs(fit * 1.2 / (ratio * multiple) - 1.0) <= 0.04)
+            shown = len(set(line_sizes[:-1])) > 1 and line_sizes[-1] in line_sizes[:-1]
+            if (shown or own) and all(abs(g - fit * s) <= 0.6 for g, s in pitches):
+                return fit
+            return None
+
         def text_tops(p):
             """The paragraph's line tops, and how far its text's top is below
             Publisher's: a first line made tall by something in it, such as
@@ -2395,7 +2422,16 @@ class Converter:
             gaps = [b - a for a, b in zip(tops, tops[1:])]
             if len(gaps) >= 2 and not p.bullet:
                 rest = sorted(gaps[1:])[len(gaps[1:]) // 2]
-                if rest > 0 and gaps[0] > 1.5 * rest:
+                # or made taller by larger text than any line after it, over
+                # evenly spaced lines, unless a multiple spaces them all as
+                # Publisher does: one exact spacing averaged over them all
+                # would put every later line low
+                sizes = _line_size_list(p)
+                larger = (len(sizes) == len(tops) and None not in sizes
+                          and sizes[0] > max(sizes[1:])
+                          and max(gaps[1:]) - min(gaps[1:]) <= 0.5 and gaps[0] - rest >= 1.0
+                          and multiple_fit(p, tops) is None)
+                if rest > 0 and (gaps[0] > 1.5 * rest or larger):
                     shift = gaps[0] - rest
                     return [tops[0] + shift] + tops[1:], shift + before
             return tops, before
@@ -2426,28 +2462,10 @@ class Converter:
                     line = ratio * big.size_pt * multiple
             if line <= 0:
                 return None
-            p.line_multiple = None
-            line_sizes = _line_size_list(p) if p.keep_lines and multiple else []
-            if (len(tops) >= 2 and len(line_sizes) == len(tops) and None not in line_sizes
-                    and len(set(line_sizes)) > 1):
-                # lines of different sizes, each as tall as its largest text:
-                # a multiple in PowerPoint too, which spaces lines the same way
-                pitches = [(b - a, 1.2 * s) for a, b, s in zip(tops, tops[1:], line_sizes)]
-                fit = sum(g for g, _ in pitches) / sum(s for _, s in pitches)
-                # no gap measures the last line, so its size must be one the
-                # others show, or the gaps must give the paragraph's own
-                # multiple for its font over a last line much smaller, as
-                # under a line made tall by one large character: one exact
-                # spacing would put that last line several points low
-                big = max(sized, key=lambda r: r.size_pt) if sized else None
-                ratio = pub_single_spacing(big.font, big.bold, big.italic) if big else None
-                own = (bool(ratio) and max(line_sizes[:-1]) >= 1.5 * line_sizes[-1]
-                       and abs(fit * 1.2 / (ratio * multiple) - 1.0) <= 0.04)
-                shown = len(set(line_sizes[:-1])) > 1 and line_sizes[-1] in line_sizes[:-1]
-                if (shown or own) and all(abs(g - fit * s) <= 0.6 for g, s in pitches):
-                    p.line_multiple = fit
-                    # the last line's height, for the space after it
-                    line = fit * 1.2 * line_sizes[-1]
+            p.line_multiple = multiple_fit(p, tops)
+            if p.line_multiple:
+                # the last line's height, for the space after it
+                line = p.line_multiple * 1.2 * _line_size_list(p)[-1]
             lift = PPT_EXTRA_ABOVE * line * (1.0 - 1.0 / multiple) if multiple and multiple > 1 else 0.0
             sizes = [r.size_pt for r in p.runs if r.size_pt and r.text]
             first_sizes = _line_size_list(p)[:1]
