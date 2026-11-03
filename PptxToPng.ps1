@@ -49,7 +49,8 @@ param
     $OutputFolder,
 
     # Pixels per inch of slide. Leave out for Save As's own size, which follows
-    # PowerPoint's export resolution setting (96 dpi unless changed).
+    # PowerPoint's export resolution setting (96 dpi unless changed). PowerPoint
+    # saves at most 3072 pixels a side, so a large slide comes out at less.
     [ValidateRange(1, 1200)]
     [int]
     $Dpi = 0
@@ -121,9 +122,20 @@ try {
             if ($Dpi -gt 0) {
                 # Save As has no size of its own; Export writes the same folder
                 # and names at the size asked for.
-                $width = [int][math]::Round($pres.PageSetup.SlideWidth / 72 * $Dpi)
-                $height = [int][math]::Round($pres.PageSetup.SlideHeight / 72 * $Dpi)
-                $pres.Export($target, "PNG", $width, $height)
+                $width = $pres.PageSetup.SlideWidth / 72 * $Dpi
+                $height = $pres.PageSetup.SlideHeight / 72 * $Dpi
+
+                # Export writes at most 3072 pixels a side and clamps only the
+                # side that is over, which squashes a banner. Shrink both
+                # sides alike instead.
+                $scale = [math]::Min(1.0, 3072 / [math]::Max($width, $height))
+                if ($scale -lt 1.0) {
+                    Write-Warning ("$($file.Name): $([int][math]::Round($width)) x $([int][math]::Round($height)) " +
+                        "pixels is past PowerPoint's 3072-pixel export limit; saved at " +
+                        "$([int][math]::Floor($Dpi * $scale)) dpi instead.")
+                }
+
+                $pres.Export($target, "PNG", [int][math]::Floor($width * $scale), [int][math]::Floor($height * $scale))
             }
             else {
                 $pres.SaveAs($target, $ppSaveAsPNG)

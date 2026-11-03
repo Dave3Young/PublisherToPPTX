@@ -21,8 +21,15 @@ Disclaimer: This script is provided "as is"
     for one export folder
     .\PublisherHtmlToPptx.ps1 -Path "C:\Pubs\Example"
 
+    for the export folders directly inside a folder
+    .\PublisherHtmlToPptx.ps1 -Path "C:\Pubs"
+
     for recursive folder processing
     .\PublisherHtmlToPptx.ps1 -Path "C:\Pubs" -Recurse
+
+    with no -Path, the current folder is used, with or without -Recurse
+    .\PublisherHtmlToPptx.ps1
+    .\PublisherHtmlToPptx.ps1 -Recurse
 
     to substitute the 300 dpi exported PNGs for Publisher's web-quality images
     .\PublisherHtmlToPptx.ps1 -Path "C:\Pubs" -Recurse -HiRes -Report
@@ -32,8 +39,8 @@ Disclaimer: This script is provided "as is"
 [CmdletBinding()]
 param
 (
-    [Parameter(Mandatory = $true)]
-    [ValidateNotNullOrEmpty()]
+    # An export folder, its .htm, or a folder of export folders. Default: the
+    # current folder.
     [string]
     $Path,
 
@@ -85,9 +92,45 @@ if (-not (Test-Path -LiteralPath $converter)) {
     exit 1
 }
 
+if (-not $Path) {
+    $Path = (Get-Location).ProviderPath
+}
+
 if (-not (Test-Path -LiteralPath $Path)) {
     Write-Error "Path not found: $Path" -ErrorAction Continue
     exit 1
+}
+
+# What the converter is given, one run each. -Recurse hands it the whole tree.
+# Without it, a folder holding a .htm is an export folder; any other folder is
+# taken to hold export folders, as the export script leaves them beside the
+# .pub files, and each one directly inside it is converted.
+$targets = @($Path)
+$item = Get-Item -LiteralPath $Path
+
+if ($item.PSIsContainer -and -not $Recurse) {
+
+    $isExport = [bool](Get-ChildItem -LiteralPath $item.FullName -File |
+        Where-Object { $_.Extension -in ".htm", ".html" })
+
+    if (-not $isExport) {
+
+        $targets = @(Get-ChildItem -LiteralPath $item.FullName -Directory |
+            Where-Object {
+                $_.Name -notlike "*_files" -and
+                (Get-ChildItem -LiteralPath $_.FullName -File |
+                    Where-Object { $_.Extension -in ".htm", ".html" })
+            } |
+            Sort-Object Name |
+            ForEach-Object { $_.FullName })
+
+        if ($targets.Count -eq 0) {
+            Write-Error ("No Publisher export folders found in $($item.FullName) " +
+                "(an export folder is one containing a .htm or .html file). " +
+                "Use -Recurse to search its subfolders too.") -ErrorAction Continue
+            exit 1
+        }
+    }
 }
 
 # ------------------------------------------------------------
@@ -215,9 +258,6 @@ if (-not $SkipInstall) {
 # ------------------------------------------------------------
 
 $arguments = @()
-$arguments += $pythonPrefix
-$arguments += $converter
-$arguments += $Path
 
 if ($Recurse)  { $arguments += "--recurse" }
 if ($HiRes)    { $arguments += "--hires" }
@@ -242,9 +282,16 @@ if ($OutputFolder) {
 
 $ErrorActionPreference = "Continue"
 
-& $pythonExe @arguments
+$exitCode = 0
 
-$exitCode = $LASTEXITCODE
+foreach ($target in $targets) {
+
+    & $pythonExe @pythonPrefix $converter $target @arguments
+
+    if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE
+    }
+}
 
 $ErrorActionPreference = "Stop"
 
