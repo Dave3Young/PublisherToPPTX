@@ -397,6 +397,7 @@ class Para:
     best_fit: bool = False            # at Publisher's best-fit size, not the export's
     exact_line_pt: Optional[float] = None
     line_multiple: Optional[float] = None   # PowerPoint's, for lines of mixed sizes
+    html_line_pct: Optional[float] = None   # the export's line-height percentage
 
     def text(self) -> str:
         return "".join(r.text for r in self.runs)
@@ -1653,6 +1654,58 @@ def pub_line_multiple(rec: dict) -> Optional[float]:
     return None                  # exact or at-least spacing: keep the HTML's
 
 
+def html_line_pct(style) -> float:
+    """The export's line-height percentage for a run, as a multiple; single
+    (1.0) when it gives none. A paragraph Publisher set back to single
+    spacing in a style that isn't single keeps the style's line-height in
+    the HTML, which can't be told apart (measured on the template corpus)."""
+    value = str(style.get("line-height") or "").strip()
+    if value.endswith("%"):
+        try:
+            return float(value[:-1]) / 100.0
+        except ValueError:
+            pass
+    return 1.0
+
+
+def html_line_spacing(para) -> None:
+    """For an export with no stage 1 text: the paragraph's line spacing from
+    the HTML's line-height percentage, which is Publisher's multiple of the
+    font's single spacing, as PowerPoint's multiple of 1.2 times the size.
+    Left alone when the font file can't be read."""
+    if not para.html_line_pct or para.line_spacing:
+        return
+    # an empty paragraph, written as a non-breaking space, still has a line
+    sized = ([r for r in para.runs if r.text.strip() and r.size_pt and not r.script]
+             or [r for r in para.runs if r.size_pt and not r.script])
+    if not sized:
+        return
+    big = max(sized, key=lambda r: r.size_pt)
+    single = pub_single_spacing(big.font, big.bold, big.italic)
+    if single:
+        para.line_spacing = round(para.html_line_pct * single / 1.2, 4)
+
+
+def html_first_lift(paras: list) -> float:
+    """For an export with no stage 1 text: how far (pt) to raise a text box
+    so that its first line sits where Publisher's does, as stage 1's
+    placement does from its records (pct_lift)."""
+    if not paras:
+        return 0.0
+    p = paras[0]
+    if not p.html_line_pct or not isinstance(p.line_spacing, float):
+        return 0.0
+    sized = ([r for r in p.runs if r.text.strip() and r.size_pt and not r.script]
+             or [r for r in p.runs if r.size_pt and not r.script])
+    if not sized:
+        return 0.0
+    big = max(sized, key=lambda r: r.size_pt)
+    lift = pct_lift(p.line_spacing * 1.2 * big.size_pt, big.size_pt, p.html_line_pct,
+                    big.font, big.bold, big.italic, pct=p.line_spacing,
+                    after=p.space_after_pt)
+    return lift or 0.0
+
+
 def ppt_first_baseline(pct: float) -> float:
     """PowerPoint's first baseline below the box top, per point of size."""
     table = PPT_BASELINE_NEAR_SINGLE
@@ -1975,6 +2028,7 @@ class Converter:
                 run = self._make_run(text, style)
                 if run:
                     current.runs.append(run)
+                    current.html_line_pct = html_line_pct(style)
                 return
             if not isinstance(node, Tag):
                 return
@@ -2025,6 +2079,11 @@ class Converter:
             emit(n, inherited)
         flush()
         base_align = ALIGN_MAP.get(str(inherited.get("text-align", "")).lower())
+        if not self.pub_text:
+            # an older export, with no stage 1 text: Publisher writes its
+            # line spacing as a percentage of the font's own single spacing
+            for p in paras:
+                html_line_spacing(p)
         for p in paras:
             if p.align is None:
                 p.align = base_align
@@ -2726,9 +2785,11 @@ class Converter:
                                          paras=paras, order=self.order, note="table cell",
                                          fixed=True))
                     else:
-                        boxes.append(Box(kind="text", x=ix + pl, y=iy + pt_,
+                        lift = (html_first_lift(paras) * self.dpi / 72.0
+                                if not self.pub_text and valign == "top" else 0.0)
+                        boxes.append(Box(kind="text", x=ix + pl, y=iy + pt_ - lift,
                                          w=max(iw - pl - pr, 8.0),
-                                         h=max(ih - pt_ - pb, 8.0),
+                                         h=max(ih - pt_ - pb + lift, 8.0),
                                          paras=paras, order=self.order, note="table cell",
                                          anchor=valign))
             cy += row_h[ri]
@@ -3467,9 +3528,11 @@ class Converter:
                     box_h = max(h - pad_t, 8.0)      # honour the declared frame
                 else:
                     box_h = max(est, 8.0)
+                # (an older export's: stage 1's are placed from its records)
+                lift = html_first_lift(paras) * self.dpi / 72.0 if not self.pub_text else 0.0
                 self.order += 1
-                boxes.append(Box(kind="text", x=content_x, y=cursor,
-                                 w=content_w, h=box_h, paras=paras, order=self.order,
+                boxes.append(Box(kind="text", x=content_x, y=cursor - lift,
+                                 w=content_w, h=box_h + lift, paras=paras, order=self.order,
                                  columns=cols, column_gap=gap))
                 cursor += est
                 trailing = paras[-1].space_after_pt * self.dpi / 72.0

@@ -220,7 +220,11 @@ in inches:
 ```
 
 Without stage 1's files, PowerPoint wraps the text itself, and blank lines, spaces and tabs
-come through from the export, which in testing looked close to Publisher. Positions are
+come through from the export, which in testing looked close to Publisher. Line spacing comes
+from the HTML's line height and the font's own single spacing, read from the installed font,
+as stage 1 would give it. One case is wrong: a paragraph set back to single spacing in a style
+that isn't single keeps the style's spacing, because the HTML doesn't record the change.
+Hyphenation is lost, so lines can break at other words. Positions are
 estimated from the HTML, custom tab stops
 and text in a box's overflow are lost, and `-HiRes` replaces pictures only where it can match
 them by order. The [Limits](#limits) below say more on each.
