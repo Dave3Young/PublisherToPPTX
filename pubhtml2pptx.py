@@ -45,8 +45,10 @@ Options
     --no-extras         do not append slides for scratch-area PNGs/text
     --reflow            let text wrap freely instead of breaking lines where
                         Publisher does
-    --page-size WxH     fallback page size in inches when stage 1 recorded none,
-                        default 8.5x11
+    --page-size WxH     page size in inches when stage 1 recorded none. Default:
+                        worked out from the HTML's page width and the content's
+                        height, as a standard size where one fits, or taken
+                        from a PDF of the publication beside the export
     --report            write <basename>_conversion_report.txt beside the pptx
     -v, --verbose       per-shape logging
 
@@ -4147,12 +4149,25 @@ def restore_vml_inline_text_boxes(soup: BeautifulSoup) -> dict:
     return divs
 
 
+_MALFORMED_IN_RE = re.compile(r"^\s*(\d+)\.-(\d+)in\s*$")
+
+
+def malformed_inches(value) -> Optional[float]:
+    """Publisher writes a length just under a whole inch count as, for
+    instance, '10.-1140in': ten inches less 0.1140."""
+    m = _MALFORMED_IN_RE.match(str(value or ""))
+    v = int(m.group(1)) - int(m.group(2)) / 10000.0 if m else 0.0
+    return v if v > 0 else None
+
+
 def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
                          default_h: Optional[float] = None,
-                         default_w: Optional[float] = None):
+                         default_w: Optional[float] = None,
+                         decode_malformed: bool = False):
     """Publisher wraps each page in a sized, positioned div. Find them.
     Publisher sometimes writes a malformed height ('10.-1737in') or width
-    ('4.-2040in') on that div; default_h and default_w (px) stand in."""
+    ('4.-2040in') on that div; default_h and default_w (px) stand in, or
+    with decode_malformed, the length it means."""
     body = soup.body or soup
     candidates = []
     for el in body.find_all(["div", "table", "section"]):
@@ -4161,6 +4176,11 @@ def find_page_containers(soup: BeautifulSoup, sheet: StyleSheet, dpi: float,
         h = to_px(st.get("height"), dpi)
         # Publisher's own wrapper: a positioned div straight under <body>
         wrapper = el.name == "div" and el.parent is body and is_positioned(st)
+        if decode_malformed and wrapper:
+            if not w and malformed_inches(st.get("width")):
+                w = malformed_inches(st.get("width")) * dpi
+            if not h and malformed_inches(st.get("height")):
+                h = malformed_inches(st.get("height")) * dpi
         if not h and default_h and wrapper and st.get("height"):
             h = default_h
         # without its width the wrapper is skipped, and a large table on
@@ -4394,6 +4414,135 @@ def bounding_page(boxes: list, dpi: float, fallback_in):
     # never smaller than the fallback page: an unpositioned publication is
     # almost always a normal page that Publisher exported as flowed HTML
     return max(max_x, fallback_in[0] * dpi), max(max_y, fallback_in[1] * dpi)
+
+
+# Publisher's common page sizes in inches, portrait. Each is tried both ways.
+STANDARD_PAGES = (
+    ("business card", 2.0, 3.5),
+    ("business card (85 x 55 mm)", 2.17, 3.35),
+    ("label", 3.333, 4.0),
+    ("third of a letter page", 3.667, 8.5),
+    ("6 3/4 envelope", 3.625, 6.5),
+    ("gift certificate", 3.667, 7.0),
+    ("#10 envelope", 4.125, 9.5),
+    ("DL envelope", 4.33, 8.66),
+    ("index card", 3.0, 5.0),
+    ("postcard", 4.0, 6.0),
+    ("postcard", 4.25, 5.5),
+    ("A6", 4.13, 5.83),
+    ("5 x 7", 5.0, 7.0),
+    ("half letter", 5.5, 8.5),
+    ("A5", 5.83, 8.27),
+    ("executive", 7.25, 10.5),
+    ("letter", 8.5, 11.0),
+    ("A4", 8.27, 11.69),
+    ("legal", 8.5, 14.0),
+    ("tabloid", 11.0, 17.0),
+    ("A3", 11.69, 16.54),
+)
+# a shape may run past the page edge by up to a usual bleed
+PAGE_BLEED_IN = 0.125
+
+
+def read_pdf_page_size(export_dir: str, base: str) -> Optional[tuple]:
+    """The first page's size in inches from a PDF of the publication, such as
+    PublisherPubToPdf.ps1 writes beside the export folder. Publisher prints
+    small pages on a full sheet, so this is the sheet, not always the page."""
+    for path in (os.path.join(os.path.dirname(os.path.normpath(export_dir)), base + ".pdf"),
+                 os.path.join(export_dir, base + ".pdf")):
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        box = re.compile(rb"/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*\]")
+        m = box.search(data)
+        if not m:
+            # the page dictionaries may sit in compressed object streams
+            import zlib
+            for s in re.finditer(rb"stream\r?\n", data):
+                end = data.find(b"endstream", s.end())
+                try:
+                    m = box.search(zlib.decompress(data[s.end():end]))
+                except zlib.error:
+                    continue
+                if m:
+                    break
+        if m:
+            try:
+                x0, y0, x1, y1 = (float(v) for v in m.groups())
+            except ValueError:
+                continue
+            w, h = abs(x1 - x0) / 72.0, abs(y1 - y0) / 72.0
+            if w > 0 and h > 0:
+                return (w, h)
+    return None
+
+
+def page_width_from_wrapper(wrapper_w: float) -> float:
+    """Publisher 2010 makes its page wrapper 0.4541in narrower than the page,
+    or 0.0156in wider: which one depends on the page. Of the two, the
+    standard or eighth-inch width is the page's."""
+    tries = (wrapper_w + 0.4541, wrapper_w - 0.0156)
+    dims = {d for _, a, b in STANDARD_PAGES for d in (a, b)}
+    for w in tries:
+        if any(abs(w - d) < 0.005 for d in dims):
+            return round(w, 4)
+    for w in tries:
+        if abs(w * 8 - round(w * 8)) < 0.02:
+            return round(w * 8) / 8
+    return round(tries[0], 4)
+
+
+def guess_page_from_wrapper(page_w: float, wrapper_h: float, pdf_size=None) -> tuple:
+    """The page for an export whose width came from its page wrapper: the
+    PDF's page if it is as wide, else the shortest standard page of that
+    width that holds the wrapper, else for a banner the shortest sheet
+    length that does, else the wrapper's height. Returns (w, h, name)."""
+    if pdf_size:
+        for w, h in (pdf_size, pdf_size[::-1]):
+            if abs(w - page_w) < 0.02 and h >= wrapper_h - 0.02:
+                return (page_w, h, "the PDF's page")
+    pairs = [(h, name) for name, a, b in STANDARD_PAGES
+             for w, h in ((a, b), (b, a)) if abs(w - page_w) < 0.02 and h >= wrapper_h - 0.02]
+    if pairs:
+        h, name = min(pairs)
+        return (page_w, h, name)
+    # a banner is printed across sheets, so it is a sheet's length tall
+    lengths = [d for d in (8.5, 11.0, 14.0, 17.0) if d >= wrapper_h - 0.02]
+    if lengths and page_w > 17.0:
+        return (page_w, lengths[0], "the export's page width, a paper length")
+    return (page_w, round(max(wrapper_h, 0.0), 2), "the export's page width and content")
+
+
+def guess_page_size(content_w: float, content_h: float, pdf_size=None) -> tuple:
+    """A page size in inches for an export with no recorded size, from the
+    extent of its content: the PDF's size if one fits, else the smallest
+    standard size the content fits in. A page more than twice the content's
+    area is not trusted. Returns (w, h, name), name None if nothing fits."""
+    area = content_w * content_h
+
+    def overshoot(w, h):
+        return max(content_w - w, content_h - h, 0.0)
+
+    def fits(w, h):
+        return overshoot(w, h) <= PAGE_BLEED_IN and w * h <= 2.0 * area
+
+    if pdf_size:
+        for w, h in (pdf_size, pdf_size[::-1]):
+            if fits(w, h):
+                return (w, h, "the PDF's page")
+    cands = []
+    for name, a, b in STANDARD_PAGES:
+        for w, h in ((a, b), (b, a)):
+            if fits(w, h):
+                # inside the page (give or take rounding) beats running past
+                # it; then the smaller page
+                cands.append((overshoot(w, h) > 0.05, w * h, w, h, name))
+    if not cands:
+        return (content_w, content_h, None)
+    _, _, w, h, name = min(cands)
+    return (w, h, name)
 
 
 # ----------------------------------------------------------------------------
@@ -4913,10 +5062,11 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
     if not htmls:
         raise FileNotFoundError(f"no .htm found in {export_dir}")
 
-    fallback = tuple(float(v) for v in args.page_size.lower().split("x"))
+    fallback = tuple(float(v) for v in (args.page_size or "8.5x11").lower().split("x"))
     # Publisher sizes its page wrapper to the content, not the page, and
-    # sometimes writes a malformed height, so prefer stage 1's real size.
-    real_page = read_page_size(export_dir, base)
+    # sometimes writes a malformed height, so prefer stage 1's real size,
+    # then a size the user gave.
+    real_page = read_page_size(export_dir, base) or (fallback if args.page_size else None)
     dpi = float(args.dpi or 96.0)
     resolver = ImageResolver(export_dir, export_dir, warn)
     conv = Converter(args, warn)
@@ -4929,6 +5079,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
 
     prs = Presentation()
     slide_pages = []   # (page_w_px, page_h_px, boxes)
+    wrappers = []      # without a recorded size: each page wrapper's (w, h) in inches
 
     for html_path in htmls:
         with open(html_path, "rb") as fh:
@@ -4958,7 +5109,8 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
         body_style = computed_style(body, sheet, {}) if isinstance(body, Tag) else {}
         pages = find_page_containers(soup, sheet, dpi,
                                      (real_page or fallback)[1] * dpi,
-                                     (real_page or fallback)[0] * dpi)
+                                     (real_page or fallback)[0] * dpi,
+                                     decode_malformed=not real_page)
         if not args.dpi and not slide_pages and pages:
             # the first page's export says what its pixels are; the rest match
             found, grow = detect_html_dpi(pages, sheet,
@@ -4971,7 +5123,8 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
                 conv.html_grow = grow
                 pages = find_page_containers(soup, sheet, dpi,
                                              (real_page or fallback)[1] * dpi,
-                                             (real_page or fallback)[0] * dpi)
+                                             (real_page or fallback)[0] * dpi,
+                                             decode_malformed=not real_page)
         if conv.html_grow:
             for el, _, _, _ in pages:
                 shrink_px_boxes(el, sheet, conv.html_grow)
@@ -4987,6 +5140,7 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
                 if real_page:
                     w, h = real_page[0] * dpi, real_page[1] * dpi
                 else:
+                    wrappers.append((w / dpi, h / dpi))
                     # the wrapper can be smaller than its content
                     w, h = bounding_page(boxes, dpi, (w / dpi, h / dpi))
                 slide_pages.append((w, h, boxes))
@@ -5004,6 +5158,32 @@ def convert_export(export_dir: str, out_path: str, args) -> dict:
 
     if not slide_pages:
         raise ValueError("no page content found in the HTML")
+
+    if not real_page:
+        # an older export with no stage 1 files: the HTML gives only the
+        # content's extent, so take the page it most likely sits on
+        cw = max(p[0] for p in slide_pages) / dpi
+        ch = max(p[1] for p in slide_pages) / dpi
+        pdf_size = read_pdf_page_size(export_dir, base)
+        if wrappers:
+            # Publisher 2010 sizes the wrapper's width by the page's, so the
+            # width is known. Page 1 is never part of a two-page spread,
+            # whose pages can come out twice as wide; shapes past the page
+            # edge cross a spread's fold
+            ww = wrappers[0][0]
+            wh = max(h for w, h in wrappers if abs(w - ww) < 0.05)
+            gw, gh, name = guess_page_from_wrapper(page_width_from_wrapper(ww), wh, pdf_size)
+        else:
+            gw, gh, name = guess_page_size(cw, ch, pdf_size)
+        if name:
+            slide_pages = [(gw * dpi, gh * dpi, b) for _, _, b in slide_pages]
+            warn(f"no page size recorded (run stage 1 on the .pub for that); "
+                 f"the page is taken as {gw:g} x {gh:g} in ({name}), worked out from "
+                 f"the HTML. Use --page-size WxH to set it")
+        else:
+            warn(f"no page size recorded (run stage 1 on the .pub for that); the "
+                 f"slide is sized to the content, {cw:.2f} x {ch:.2f} in. "
+                 f"Use --page-size WxH to set it")
 
     # one deck-wide slide size: PowerPoint/Canva allow only one
     page_w = max(p[0] for p in slide_pages)
@@ -5273,7 +5453,14 @@ def main(argv=None) -> int:
     ap.add_argument("--no-extras", action="store_true", help="skip scratch-area slides")
     ap.add_argument("--reflow", action="store_true",
                     help="let text wrap freely instead of breaking lines where Publisher does")
-    ap.add_argument("--page-size", default="8.5x11", help="fallback page size in inches")
+    def page_size_arg(text):
+        m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*", text)
+        if not m or float(m.group(1)) <= 0 or float(m.group(2)) <= 0:
+            raise argparse.ArgumentTypeError(f"expected WxH in inches, such as 8.5x11, not {text!r}")
+        return f"{m.group(1)}x{m.group(2)}"
+
+    ap.add_argument("--page-size", default=None, type=page_size_arg,
+                    help="page size in inches (WxH) when stage 1 recorded none")
     ap.add_argument("--report", action="store_true", help="write a per-file conversion report")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)

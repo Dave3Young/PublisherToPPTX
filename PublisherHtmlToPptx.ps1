@@ -34,6 +34,9 @@ Disclaimer: This script is provided "as is"
     to substitute the 300 dpi exported PNGs for Publisher's web-quality images
     .\PublisherHtmlToPptx.ps1 -Path "C:\Pubs" -Recurse -HiRes -Report
 
+    for an older export with no _pagesize.txt, to set the page size (inches)
+    .\PublisherHtmlToPptx.ps1 -Path "C:\Pubs\Example" -PageSize 8.27x11.69
+
     source: www.david-e-young.com
 #>
 [CmdletBinding()]
@@ -73,6 +76,14 @@ param
     # 96), else uses 96. Set it only if pages come out the wrong size.
     [double]
     $Dpi = 96,
+
+    # Page size in inches, width x height, such as "8.27x11.69", for an export
+    # with no _pagesize.txt (one made by an older script). Leave it out: the
+    # converter works it out from the HTML. Stage 1's recorded size always
+    # wins.
+    [ValidatePattern('^\d+(\.\d+)?x\d+(\.\d+)?$')]
+    [string]
+    $PageSize,
 
     # Skip the dependency check (faster on repeat runs).
     [switch]
@@ -271,6 +282,10 @@ if ($PSBoundParameters.ContainsKey("Verbose")) {
 
 if ($PSBoundParameters.ContainsKey("Dpi")) {
     $arguments += @("--dpi", $Dpi.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+}
+
+if ($PageSize) {
+    $arguments += @("--page-size", $PageSize)
 }
 
 if ($OutputFolder) {

@@ -15,6 +15,8 @@ The conversion runs in two stages:
 Use this repository's stage 1 script, not `PublisherPubToHTMLPNGfilesFinal.ps1` from
 [Publisher_Exports](https://github.com/Dave3Young/Publisher_Exports). That script does not
 record the page size or the text layout files that stage 2 needs to match Publisher's layout.
+If you only have that script's output and no longer have the `.pub`, see
+[Converting older exports](#converting-older-exports).
 
 ## Unblock the scripts after downloading
 Windows marks files downloaded from the internet as blocked, and PowerShell may then refuse to
@@ -171,7 +173,7 @@ puts their pictures; run stage 1 with `-RefreshTextLayout` to fix either.
 ## What gets converted
 | Publisher content | In the `.pptx` |
 | --- | --- |
-| Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size comes from the HTML, grown to fit the content. When the pages differ in size, the deck uses the largest. |
+| Page | One slide, at the page size stage 1 records in `<name>_pagesize.txt`. Without that file, the size is guessed from the content; see [Converting older exports](#converting-older-exports). When the pages differ in size, the deck uses the largest. |
 | Text box | An editable text box, keeping font, size, colour, bold, italic, underline, all caps, small caps, letter spacing (Publisher's tracking too, from `_text.json`), line breaks, indents (hanging ones too, from `_text.json`), tabs and blank lines. With `_text.json`, each line ends where Publisher ends it, with a hyphen where Publisher hyphenates a word, so text wraps as in Publisher even where it flows around a picture. Use `-Reflow` to let PowerPoint wrap the text instead. Publisher exports some text boxes, filled ones for instance, as a picture of the text. Stage 2 rebuilds these as editable text from the copy Publisher keeps in the HTML's VML markup, with the box's outline behind it: a rectangle, rounded rectangle, ellipse or callout, solid or dashed. |
 | Text box overflow | Left out, as Publisher hides it: paragraphs past the bottom of a text box, and inline pictures too wide for it. Each is listed as a warning. |
 | Picture | A picture at the same position and size, cropped to the same shape when Publisher crops it to a rounded rectangle or ellipse, and stacked in Publisher's order. With `-HiRes`, stage 1's 300 dpi PNG is used. |
@@ -185,6 +187,43 @@ puts their pictures; run stage 1 with `-RefreshTextLayout` to fix either.
 
 BMP, TIFF, WMF, EMF, WebP and ICO images are converted to PNG in an `_pptx_converted`
 folder inside the export folder. A table becomes separate boxes, not a PowerPoint table.
+
+## Converting older exports
+Exports made by `PublisherPubToHTMLPNGfilesFinal.ps1` from
+[Publisher_Exports](https://github.com/Dave3Young/Publisher_Exports), or by stage 1 before it
+wrote its extra files, have the HTML and PNGs but no `_pagesize.txt`, `_text.json` or
+`_pictures.json`. If you still have the `.pub`, run stage 1 on it instead: that gives the best
+result. Otherwise, run stage 2 on the export folder as usual:
+
+```powershell
+.\PublisherHtmlToPptx.ps1 -Path "C:\Pubs\Example"
+```
+
+Publisher's HTML doesn't record the page size, so stage 2 works it out. Publisher 2010 sizes
+the box it wraps each page in from the page's width, so the width comes from that box, read
+from page 1 (a page of a two-page spread can be twice as wide). The height comes from how far
+the content reaches: the shortest standard page of that width that holds it, such as a
+business card, postcard, envelope, half letter, letter, A4, legal or tabloid, upright or
+sideways. A banner gets the shortest sheet length that holds it. A PDF of the publication
+beside the export folder, such as `PublisherPubToPdf.ps1` from Publisher_Exports writes, is
+used instead when it is as wide. Publisher prints a small page, such as a business card, on a
+full sheet, so that PDF's size is ignored.
+
+Tested on 752 publications, made from Publisher 2010's own templates, this finds the page
+size stage 1 records for 96% of them. The misses are mostly labels and other uncommon
+sizes, and pages whose content stops well short of the bottom edge, such as a letterhead
+with text only at the top. The size chosen is listed as a warning. If it is wrong, set it
+in inches:
+
+```powershell
+.\PublisherHtmlToPptx.ps1 -Path "C:\Pubs\Example" -PageSize 8.27x11.69
+```
+
+Without stage 1's files, PowerPoint wraps the text itself, and blank lines, spaces and tabs
+come through from the export, which in testing looked close to Publisher. Positions are
+estimated from the HTML, custom tab stops
+and text in a box's overflow are lost, and `-HiRes` replaces pictures only where it can match
+them by order. The [Limits](#limits) below say more on each.
 
 ## Limits
 Warnings are counted in the run summary, and each one is listed with `-Report` or `-Verbose`.
@@ -246,7 +285,8 @@ Warnings are counted in the run summary, and each one is listed with `-Report` o
 Each export is in stage 1's own layout, a subfolder named after the publication, with its
 `_pagesize.txt` and `_text.json`. `bizcard` also keeps an older export next to the `.pub`,
 made before stage 1 recorded page sizes and text layout. It shows how stage 2 converts an
-export without those files. Converting `samples` with `-Recurse` converts both copies.
+export without those files (see [Converting older exports](#converting-older-exports)).
+Converting `samples` with `-Recurse` converts both copies.
 
 `make_sidebyside.ps1` builds the three `sidebyside` samples in Publisher, including a PDF
 showing how each should look. Its test pictures are lettered squares in `sidebyside-images\`,
